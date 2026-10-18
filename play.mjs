@@ -1,0 +1,10 @@
+import { chromium } from 'playwright';
+const b = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--autoplay-policy=no-user-gesture-required'] });
+const p = await b.newPage({ viewport: { width: 1280, height: 720 } });
+const errs = []; p.on('pageerror', e => errs.push(e.message)); p.on('console', m => m.type() === 'error' && !/Failed to load/.test(m.text()) && errs.push(m.text()));
+await p.goto('file://' + process.cwd() + '/微积分宣传片.html');
+await p.waitForTimeout(16000);
+await p.click('#go'); await p.waitForTimeout(4000);
+console.log('audio t =', await p.evaluate(() => document.getElementById('au').currentTime), 'dur', await p.evaluate(() => document.getElementById('au').duration));
+await p.screenshot({ path: 'shots/play.jpg' });
+console.log(errs.join('\n') || 'no errors'); await b.close();

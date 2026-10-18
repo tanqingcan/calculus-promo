@@ -1,0 +1,1400 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>微积分 · 变化之美</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;700;900&family=Cinzel:wght@400;700&family=Cormorant+Garamond:ital,wght@0,500;1,500&family=Great+Vibes&family=STIX+Two+Text:ital,wght@0,400;1,400&display=block" rel="stylesheet">
+<style>
+  :root { --bg: #000; --fg: #f3ead8; --gold: #e2bd6b; --dim: rgba(255,255,255,.55); }
+  :root:not([data-theme="light"]) { --bg: #000; }
+  :root[data-theme="dark"] { --bg: #000; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); overflow: hidden; }
+  body { font-family: "Noto Serif SC", serif; }
+  #stage { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; }
+  canvas { width: 100vw; height: 56.25vw; max-height: 100vh; max-width: 177.78vh; background: #000; display: block; }
+  #start { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px;
+    background: radial-gradient(ellipse at center, #0c1626 0%, #000 70%); cursor: pointer; z-index: 5; text-align: center; padding: 16px; }
+  #start h1 { font-weight: 900; font-size: clamp(40px, 9vw, 120px); margin: 0; letter-spacing: .14em;
+    background: linear-gradient(120deg, #7a5520, #f3d88f 45%, #fff4d2 50%, #d9b25c 55%, #7a5520); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  #start p { margin: 0; font-family: "Cinzel", serif; letter-spacing: .3em; color: #cdb88e; font-size: clamp(12px, 2vw, 20px); }
+  #start button { margin-top: 18px; font: 700 18px "Noto Serif SC", serif; color: #1a1206; background: var(--gold); border: 0; border-radius: 999px;
+    padding: 14px 34px; cursor: pointer; letter-spacing: .15em; }
+  #start small { color: var(--dim); font-size: 13px; letter-spacing: .1em; }
+  #ui { position: fixed; left: 0; right: 0; bottom: 0; padding: 14px 16px 16px; display: flex; gap: 14px; align-items: center;
+    background: linear-gradient(transparent, rgba(0,0,0,.75)); transition: opacity .4s; z-index: 4; font: 13px "Cinzel", serif; color: #ddd; }
+  #ui.hide { opacity: 0; }
+  #ui button { background: none; border: 0; color: #fff; font-size: 18px; cursor: pointer; width: 32px; }
+  #bar { flex: 1; height: 5px; background: rgba(255,255,255,.2); border-radius: 3px; cursor: pointer; position: relative; }
+  #fill { position: absolute; left: 0; top: 0; bottom: 0; background: var(--gold); border-radius: 3px; width: 0; }
+</style>
+</head>
+<body>
+<div id="stage"><canvas id="c" width="1920" height="1080"></canvas></div>
+<div id="start">
+  <h1>微积分</h1>
+  <p>THE BEAUTY OF CHANGE</p>
+  <button id="go">▶ 播放宣传片</button>
+  <small id="load">载入字体中…</small>
+</div>
+<div id="ui" class="hide"><button id="pp">❚❚</button><span id="tm">0:00</span><div id="bar"><div id="fill"></div></div><span id="dur">3:13</span><button id="fs">⛶</button></div>
+<audio id="au" preload="auto"></audio>
+<script>
+'use strict';
+const W = 1920, H = 1080, BPM = 90, BEAT = 60 / BPM, BAR = BEAT * 4, EIGHTH = BEAT / 2, NBARS = 71, TOTAL = NBARS * BAR + 4;
+const EXPORT = /[?&]export=1/.test(location.search);
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+const PI = Math.PI, TAU = PI * 2;
+const clamp = (x, a = 0, b = 1) => x < a ? a : x > b ? b : x;
+const lerp = (a, b, t) => a + (b - a) * t;
+const sstep = (a, b, x) => { const t = clamp((x - a) / (b - a)); return t * t * (3 - 2 * t); };
+const eio = t => t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+const eout = t => 1 - Math.pow(1 - t, 3);
+const eexpo = t => t >= 1 ? 1 : 1 - Math.pow(2, -10 * t);
+const win = (t, a, b, fi = .5, fo = .5) => sstep(a, a + fi, t) * (1 - sstep(b - fo, b, t));
+function mulberry(a) { return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+const hash1 = n => { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
+const F_ZH = '"Noto Serif SC", "Noto Serif CJK SC", "Source Han Serif SC", "SimSun", serif';
+const F_EN = '"Cinzel", "Times New Roman", serif';
+const F_IT = '"Cormorant Garamond", "Times New Roman", serif';
+const F_MATH = '"STIX Two Text", "Cambria Math", "Times New Roman", serif';
+const F_SCRIPT = '"Great Vibes", cursive';
+
+function text(s, x, y, o = {}) {
+  if ((o.alpha ?? 1) <= 0) return;
+  ctx.save();
+  ctx.font = `${o.style || ''} ${o.weight || 400} ${o.size || 40}px ${o.font || F_ZH}`;
+  ctx.textAlign = o.align || 'center'; ctx.textBaseline = o.base || 'middle';
+  if (o.ls) { ctx.letterSpacing = o.ls + 'px'; if ((o.align || 'center') === 'center') x += o.ls / 2; }
+  ctx.globalAlpha *= o.alpha ?? 1;
+  if (o.glow) { ctx.shadowColor = o.glow; ctx.shadowBlur = o.blur || 24; }
+  ctx.fillStyle = o.color || '#fff';
+  ctx.fillText(s, x, y);
+  ctx.restore();
+}
+function tw(s, size, font = F_MATH, weight = 400, style = '') { ctx.save(); ctx.font = `${style} ${weight} ${size}px ${font}`; const w = ctx.measureText(s).width; ctx.restore(); return w; }
+// a run of math pieces laid out left→right: [str, {size, dy, style, color}] ; returns total width
+function mathRun(parts, x, y, o = {}) {
+  const base = o.size || 60, ws = parts.map(([s, p = {}]) => tw(s, (p.size || 1) * base, p.font || F_MATH, 400, p.style ?? 'italic'));
+  const total = ws.reduce((a, b) => a + b, 0);
+  let cx = (o.align || 'center') === 'center' ? x - total / 2 : x;
+  parts.forEach(([s, p = {}], i) => {
+    text(s, cx, y + (p.dy || 0) * base, { font: p.font || F_MATH, style: p.style ?? 'italic', size: (p.size || 1) * base, align: 'left',
+      color: p.color || o.color || '#fff', alpha: (o.alpha ?? 1) * (p.alpha ?? 1), glow: o.glow, blur: o.blur });
+    cx += ws[i];
+  });
+  return total;
+}
+function goldGrad(x0, y0, x1, y1, s) {
+  const g = ctx.createLinearGradient(x0, y0, x1, y1);
+  g.addColorStop(0, '#6e4b1b'); g.addColorStop(.35, '#d9b25c');
+  if (s > .05 && s < .95) { g.addColorStop(s - .05, '#e7c574'); g.addColorStop(s, '#fff6dc'); g.addColorStop(s + .05, '#e7c574'); }
+  g.addColorStop(.7, '#c99a45'); g.addColorStop(1, '#7a5520');
+  return g;
+}
+function glowDot(x, y, r, col, a = 1) {
+  if (a <= 0 || r <= 0) return;
+  const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+  g.addColorStop(0, `rgba(255,255,255,${a})`); g.addColorStop(.18, col.replace('A', a * .9)); g.addColorStop(1, col.replace('A', 0));
+  ctx.fillStyle = g; ctx.fillRect(x - r, y - r, 2 * r, 2 * r);
+}
+// glowing polyline: three additive passes (halo, mid, core)
+function glowLine(pts, rgb, a = 1, w = 2.6, close = false) {
+  if (a <= 0 || pts.length < 2) return;
+  ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  for (const [k, al] of [[5, .07], [2.4, .17], [1, .95]]) {
+    ctx.beginPath(); pts.forEach((p, i) => ctx[i ? 'lineTo' : 'moveTo'](p[0], p[1])); if (close) ctx.closePath();
+    ctx.strokeStyle = `rgba(${rgb},${al * a})`; ctx.lineWidth = w * k; ctx.stroke();
+  }
+  ctx.restore();
+}
+const sample = (f, x0, x1, n = 240) => Array.from({ length: n + 1 }, (_, i) => { const x = lerp(x0, x1, i / n); return [x, f(x)]; });
+function axes(X, Y, x0, x1, y0, y1, a, o = {}) {
+  if (a <= 0) return;
+  ctx.save(); ctx.globalAlpha = a; ctx.strokeStyle = o.col || 'rgba(190,210,255,.5)'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(X(x0), Y(0)); ctx.lineTo(X(x1), Y(0)); ctx.moveTo(X(o.yx ?? 0), Y(y0)); ctx.lineTo(X(o.yx ?? 0), Y(y1)); ctx.stroke();
+  ctx.fillStyle = ctx.strokeStyle;
+  const ah = (x, y, dx, dy) => { ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - dx * 14 - dy * 7, y - dy * 14 + dx * 7); ctx.lineTo(x - dx * 14 + dy * 7, y - dy * 14 - dx * 7); ctx.fill(); };
+  ah(X(x1), Y(0), 1, 0); ah(X(o.yx ?? 0), Y(y1), 0, -1);
+  if (o.grid) {
+    ctx.strokeStyle = 'rgba(150,180,255,.07)'; ctx.lineWidth = 1; ctx.beginPath();
+    for (let x = Math.ceil(x0); x <= x1; x++) { ctx.moveTo(X(x), Y(y0)); ctx.lineTo(X(x), Y(y1)); }
+    for (let y = Math.ceil(y0); y <= y1; y++) { ctx.moveTo(X(x0), Y(y)); ctx.lineTo(X(x1), Y(y)); }
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+function hsl(h, s = 80, l = 62, a = 1) { return `hsla(${h},${s}%,${l}%,${a})`; }
+function hueRGB(h, s = .8, l = .62) { const k = n => (n + h / 30) % 12, a = s * Math.min(l, 1 - l), f = n => l - a * Math.max(-1, Math.min(k(n) - 3, 9 - k(n), 1)); return `${f(0) * 255 | 0},${f(8) * 255 | 0},${f(4) * 255 | 0}`; }
+
+// ======================================================================== WebGL: backdrops + film post-processing
+const glc = document.createElement('canvas'); glc.width = W; glc.height = H;
+const gl = glc.getContext('webgl2', { preserveDrawingBuffer: true, antialias: false, alpha: false, premultipliedAlpha: false });
+gl.getExtension('EXT_color_buffer_float'); gl.getExtension('OES_texture_float_linear');
+const VS = `#version 300 es
+in vec2 p; out vec2 vUv; void main() { vUv = p * .5 + .5; gl_Position = vec4(p, 0., 1.); }`;
+const HEAD = `#version 300 es
+precision highp float;
+in vec2 vUv; out vec4 o;
+uniform vec2 uRes;
+#define PI 3.14159265359
+float hash(vec2 p){ uvec2 q=uvec2(ivec2(floor(p))+ivec2(4096))*uvec2(1597334673u,3812015801u); uint n=(q.x^q.y)*1597334673u; n^=n>>16; n*=2246822519u; n^=n>>13; return float(n)*(1./4294967295.); }
+`;
+const FS_BG = HEAD + `
+uniform float uTime; uniform int uMode; uniform vec3 uTint; uniform float uAmp; uniform float uGrid; uniform vec2 uC; uniform float uScale; uniform float uTerms;
+vec3 hsv(float h,float s,float v){ vec3 k=clamp(abs(mod(h*6.+vec3(0,4,2),6.)-3.)-1.,0.,1.); return v*mix(vec3(1),k,s); }
+vec2 cmul(vec2 a, vec2 b){ return vec2(a.x*b.x-a.y*b.y, a.x*b.y+a.y*b.x); }
+float noise(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.-2.*f);
+  return mix(mix(hash(i),hash(i+vec2(1,0)),f.x), mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x), f.y); }
+float fbm(vec2 p){ float s=0., a=.5; for(int i=0;i<6;i++){ s+=a*noise(p); p=p*2.03+vec2(1.7,9.2); a*=.5; } return s; }
+vec3 nebula(vec2 uv){
+  float t=uTime*.02; vec2 p=uv*1.25;
+  vec2 q=vec2(fbm(p+t), fbm(p+vec2(5.2,1.3)-t));
+  float n=fbm(p+2.2*q+vec2(t*2.,0.));
+  vec3 c=vec3(.008,.01,.025);
+  c+=uTint*smoothstep(.35,1.05,n)*1.3;
+  c+=uTint.zxy*.45*pow(clamp(q.y-.2,0.,1.),3.);
+  float h=hash(floor(gl_FragCoord.xy/2.));
+  c+=vec3(.9,.95,1.)*step(.9975,h)*(.55+.45*sin(uTime*2.+h*500.));
+  // faint graph-paper grid that breathes in when uGrid > 0
+  vec2 g=abs(fract(uv*4.+.5)-.5)/fwidth(uv*4.);
+  c+=vec3(.25,.35,.7)*uGrid*(1.-clamp(min(g.x,g.y),0.,1.))*.25*(1.-.6*length(uv));
+  return c;
+}
+// interference of point sources: a solution of the wave equation
+vec3 waves(vec2 uv){
+  float s=0.;
+  for(int i=0;i<5;i++){ float fi=float(i); vec2 c=.75*vec2(cos(fi*1.257+uTime*.05), sin(fi*1.257*1.3+uTime*.04));
+    float r=length(uv-c); s+=sin(r*22.-uTime*2.2+fi)/(1.+r*2.); }
+  s/=2.2;
+  vec3 col=mix(vec3(.01,.015,.04), uTint, smoothstep(-.2,.9,s));
+  col+=vec3(1.,.85,.6)*pow(max(s,0.),5.)*.9;
+  return col*(1.-.35*length(uv))+nebula(uv)*.35;
+}
+// the Mandelbrot set: does z -> z^2 + c stay bounded? smooth escape-time colouring
+vec3 mandel(vec2 uv){
+  vec2 c=uC+uv*uScale, z=vec2(0.); float n=0., m2=0.;
+  for(int i=0;i<420;i++){ z=vec2(z.x*z.x-z.y*z.y, 2.*z.x*z.y)+c; m2=dot(z,z); if(m2>256.) break; n+=1.; }
+  if(n>=420.) return vec3(.0,.0,.01);
+  float sn=n-log2(log2(m2))+4., t=log2(sn+1.);
+  vec3 col=.5+.5*cos(6.2831*(t*.42+vec3(.58,.66,.78)));
+  col=mix(col*vec3(.4,.6,1.1), vec3(1.,.78,.42), pow(.5+.5*cos(6.2831*t*.42+1.3),8.));
+  return col*.62*(.35+.65*smoothstep(0.,1.5,t));
+}
+// domain colouring of the Taylor partial sum P(z) of sin z: hue = argument, rings = powers of two in |P|
+vec3 domain(vec2 uv){
+  vec2 z=uv*4.1, z2=cmul(z,z), term=z, s=vec2(0.);
+  for(int j=0;j<12;j++){ float fj=float(j); s+=term*clamp(uTerms-fj,0.,1.); term=cmul(term,-z2)/((2.*fj+2.)*(2.*fj+3.)); }
+  float a=atan(s.y,s.x)/(2.*PI), l=log2(length(s)+1e-9);
+  vec3 col=hsv(a+.02,.72,1.);
+  float ring=fract(l); col*=.5+.5*pow(ring,.6);
+  vec2 g=abs(fract(s+.5)-.5)/max(fwidth(s),vec2(1e-4)); col=mix(col,vec3(1.),(1.-clamp(min(g.x,g.y),0.,1.))*.22);
+  col*=smoothstep(-6.,1.,l)*.85+.15;
+  return mix(vec3(dot(col,vec3(.3))),col,.8)*.6;
+}
+void main(){
+  vec2 uv=(gl_FragCoord.xy-.5*uRes)/(.5*uRes.y);
+  vec3 c = uMode==0 ? nebula(uv) : uMode==1 ? waves(uv) : uMode==2 ? mandel(uv) : domain(uv);
+  o=vec4(c*uAmp,1.);
+}`;
+const FS_ACC = HEAD + `uniform sampler2D uT; uniform float uW; void main(){ o = vec4(texture(uT, vUv).rgb * uW, 1.); }`;
+const FS_DOWN = HEAD + `uniform sampler2D uT; uniform vec2 uTexel; uniform float uThresh;
+vec3 pre(vec3 c){ if(uThresh<=0.) return c; float l=max(c.r,max(c.g,c.b)); float k=clamp(l-uThresh+.12,0.,.24); k=k*k/.48; return c*max(k,l-uThresh)/max(l,1e-4); }
+void main(){ vec2 h=uTexel*.5;
+  vec3 s=pre(texture(uT,vUv).rgb)*4.+pre(texture(uT,vUv-h).rgb)+pre(texture(uT,vUv+h).rgb)+pre(texture(uT,vUv+vec2(h.x,-h.y)).rgb)+pre(texture(uT,vUv-vec2(h.x,-h.y)).rgb);
+  o=vec4(s/8.,1.); }`;
+const FS_UP = HEAD + `uniform sampler2D uT; uniform vec2 uTexel;
+void main(){ vec2 h=uTexel*.5; vec3 s=vec3(0.);
+  s+=texture(uT,vUv+vec2(-h.x*2.,0.)).rgb; s+=texture(uT,vUv+vec2(-h.x,h.y)).rgb*2.; s+=texture(uT,vUv+vec2(0.,h.y*2.)).rgb; s+=texture(uT,vUv+vec2(h.x,h.y)).rgb*2.;
+  s+=texture(uT,vUv+vec2(h.x*2.,0.)).rgb; s+=texture(uT,vUv+vec2(h.x,-h.y)).rgb*2.; s+=texture(uT,vUv+vec2(0.,-h.y*2.)).rgb; s+=texture(uT,vUv+vec2(-h.x,-h.y)).rgb*2.;
+  o=vec4(s/12.,1.); }`;
+const FS_FINAL = HEAD + `uniform sampler2D uScene; uniform sampler2D uBloom; uniform float uBloomAmt; uniform float uCA; uniform float uVig; uniform float uGrain;
+uniform float uSeed; uniform float uSat; uniform float uSplit; uniform vec3 uTintS; uniform vec3 uTintH;
+uniform vec4 uShock; uniform float uZoom; uniform vec3 uRays;
+void main(){
+  vec2 uv=vUv, asp=vec2(uRes.x/uRes.y,1.);
+  if(uShock.w>0.){                       // a refracting ring expanding from the hit
+    vec2 dd=(uv-uShock.xy)*asp; float r=length(dd), R=uShock.z*1.9;
+    float k=exp(-pow((r-R)/.07,2.))*uShock.w*exp(-uShock.z*1.4);
+    uv-=dd/max(r,1e-4)/asp*k*.035;
+  }
+  vec2 d=uv-.5;
+  vec3 c=vec3(texture(uScene,uv-d*(uCA+uZoom*.02)).r, texture(uScene,uv).g, texture(uScene,uv+d*(uCA+uZoom*.02)).b);
+  if(uZoom>.001){ vec3 acc=c; for(int i=1;i<10;i++){ acc+=texture(uScene,uv-d*uZoom*float(i)/9.).rgb; } c=acc/10.; }
+  c+=texture(uBloom,uv).rgb*uBloomAmt;
+  if(uRays.z>0.){                        // god rays: march the bloom buffer toward the light
+    vec2 L=uRays.xy, st=(L-uv)/40.; vec2 p=uv; vec3 acc=vec3(0.); float w=1.;
+    for(int i=0;i<40;i++){ p+=st; acc+=texture(uBloom,p).rgb*w; w*=.955; }
+    c+=acc/40.*uRays.z*3.;
+  }
+  vec3 k=max(c-.8,0.); c=min(c,.8)+k/(1.+k*5.);
+  float l=dot(c,vec3(.2126,.7152,.0722));
+  c=mix(c, c*mix(uTintS,uTintH,smoothstep(.04,.62,l)), uSplit);
+  c=mix(vec3(l),c,uSat);
+  c*=1.-uVig*smoothstep(.3,1.05,length(d*vec2(1.,.62))*1.5);
+  c+=(hash(gl_FragCoord.xy+vec2(uSeed*37.,uSeed*17.))-.5)*uGrain*(.55+.45*(1.-l));
+  o=vec4(c,1.);
+}`;
+function compile(type, src) { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(s)); return s; }
+function program(fs, names) {
+  const pr = gl.createProgram(); gl.attachShader(pr, compile(gl.VERTEX_SHADER, VS)); gl.attachShader(pr, compile(gl.FRAGMENT_SHADER, fs));
+  gl.bindAttribLocation(pr, 0, 'p'); gl.linkProgram(pr); if (!gl.getProgramParameter(pr, gl.LINK_STATUS)) console.error(gl.getProgramInfoLog(pr));
+  const u = {}; for (const n of ['uRes', ...names]) u[n] = gl.getUniformLocation(pr, n); return { pr, u };
+}
+const P_BG = program(FS_BG, ['uTime', 'uMode', 'uTint', 'uAmp', 'uGrid', 'uC', 'uScale', 'uTerms']);
+const P_ACC = program(FS_ACC, ['uT', 'uW']);
+const P_DOWN = program(FS_DOWN, ['uT', 'uTexel', 'uThresh']);
+const P_UP = program(FS_UP, ['uT', 'uTexel']);
+const P_FIN = program(FS_FINAL, ['uScene', 'uBloom', 'uBloomAmt', 'uCA', 'uVig', 'uGrain', 'uSeed', 'uSat', 'uSplit', 'uTintS', 'uTintH', 'uShock', 'uZoom', 'uRays']);
+const VAO = gl.createVertexArray(); gl.bindVertexArray(VAO);
+gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer()); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+function makeTex(w, h, float) {
+  const t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t);
+  gl.texImage2D(gl.TEXTURE_2D, 0, float ? gl.RGBA16F : gl.RGBA8, w, h, 0, gl.RGBA, float ? gl.HALF_FLOAT : gl.UNSIGNED_BYTE, null);
+  for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, gl.LINEAR], [gl.TEXTURE_MAG_FILTER, gl.LINEAR], [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, k, v);
+  return t;
+}
+function makeFbo(w, h) { const t = makeTex(w, h, true), f = gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER, f); gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t, 0); return { t, f, w, h }; }
+const SCENE_TEX = makeTex(W, H, false);
+const ACC = makeFbo(W, H), MIPS = [1, 2, 3, 4, 5].map(k => makeFbo(Math.ceil(W / 2 ** k), Math.ceil(H / 2 ** k)));
+function tri(target, w, h) { gl.bindFramebuffer(gl.FRAMEBUFFER, target); gl.viewport(0, 0, w, h); gl.drawArrays(gl.TRIANGLES, 0, 3); }
+function bindTex(unit, t) { gl.activeTexture(gl.TEXTURE0 + unit); gl.bindTexture(gl.TEXTURE_2D, t); }
+function glDraw(mode, u = {}, alpha = 1) {
+  const P = P_BG; gl.useProgram(P.pr); gl.disable(gl.BLEND);
+  gl.uniform2f(P.u.uRes, W, H); gl.uniform1f(P.u.uTime, u.time ?? 0); gl.uniform1i(P.u.uMode, mode);
+  const t = u.tint || [.2, .3, .7]; gl.uniform3f(P.u.uTint, t[0], t[1], t[2]); gl.uniform1f(P.u.uAmp, u.amp ?? 1); gl.uniform1f(P.u.uGrid, u.grid ?? 0);
+  const c = u.c || [0, 0]; gl.uniform2f(P.u.uC, c[0], c[1]); gl.uniform1f(P.u.uScale, u.scale ?? 1); gl.uniform1f(P.u.uTerms, u.terms ?? 1);
+  tri(null, W, H);
+  ctx.save(); ctx.globalAlpha = alpha; ctx.drawImage(glc, 0, 0); ctx.restore();
+}
+function accumulate(k, K) {
+  bindTex(0, SCENE_TEX); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, cv);
+  gl.useProgram(P_ACC.pr); gl.uniform1i(P_ACC.u.uT, 0); gl.uniform1f(P_ACC.u.uW, 1 / K);
+  if (k === 0) gl.disable(gl.BLEND); else { gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE); }
+  tri(ACC.f, W, H); gl.disable(gl.BLEND);
+}
+const GRADE = { bloom: .95, ca: .0022, vig: .55, grain: .045, sat: 1.04, split: .5, tintS: [.88, .97, 1.12], tintH: [1.07, 1.0, .9] };
+function post(T, g) {
+  let src = ACC;
+  gl.useProgram(P_DOWN.pr); gl.uniform1i(P_DOWN.u.uT, 0);
+  MIPS.forEach((dst, i) => { bindTex(0, src.t); gl.uniform2f(P_DOWN.u.uTexel, 1 / src.w, 1 / src.h); gl.uniform1f(P_DOWN.u.uThresh, i ? 0 : .5); tri(dst.f, dst.w, dst.h); src = dst; });
+  gl.useProgram(P_UP.pr); gl.uniform1i(P_UP.u.uT, 0); gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE);
+  for (let i = MIPS.length - 1; i > 0; i--) { const s = MIPS[i], d = MIPS[i - 1]; bindTex(0, s.t); gl.uniform2f(P_UP.u.uTexel, 1 / s.w, 1 / s.h); tri(d.f, d.w, d.h); }
+  gl.disable(gl.BLEND);
+  const P = P_FIN; gl.useProgram(P.pr); bindTex(0, ACC.t); bindTex(1, MIPS[0].t);
+  gl.uniform1i(P.u.uScene, 0); gl.uniform1i(P.u.uBloom, 1); gl.uniform2f(P.u.uRes, W, H);
+  gl.uniform1f(P.u.uBloomAmt, g.bloom); gl.uniform1f(P.u.uCA, g.ca); gl.uniform1f(P.u.uVig, g.vig); gl.uniform1f(P.u.uGrain, g.grain);
+  gl.uniform1f(P.u.uSeed, Math.floor(T * 30) % 97); gl.uniform1f(P.u.uSat, g.sat); gl.uniform1f(P.u.uSplit, g.split);
+  gl.uniform3fv(P.u.uTintS, g.tintS); gl.uniform3fv(P.u.uTintH, g.tintH);
+  const sh = g.shock || [.5, .5, 0, 0], ry = g.rays || [.5, .5, 0]; gl.uniform4f(P.u.uShock, sh[0], sh[1], sh[2], sh[3]); gl.uniform1f(P.u.uZoom, g.zoom || 0); gl.uniform3f(P.u.uRays, ry[0], ry[1], ry[2]);
+  tri(null, W, H); bindTex(1, null); bindTex(0, null);
+}
+
+// ======================================================================== shared assets
+const rnd = mulberry(20261019);
+function sunburst(cx, cy, lt, a, n = 24, col = '255,200,120') {
+  if (a <= 0) return;
+  ctx.save(); ctx.translate(cx, cy); ctx.rotate(lt * .05); ctx.globalCompositeOperation = 'lighter';
+  const g = ctx.createRadialGradient(0, 0, 0, 0, 0, 1100); g.addColorStop(0, `rgba(${col},${.16 * a})`); g.addColorStop(1, `rgba(${col},0)`);
+  ctx.fillStyle = g;
+  for (let i = 0; i < n; i++) { const a0 = i * TAU / n; ctx.beginPath(); ctx.moveTo(0, 0); ctx.arc(0, 0, 1200, a0, a0 + TAU / n * .45); ctx.fill(); }
+  ctx.restore();
+}
+function flare(x, y, a, len = 900) {         // anamorphic lens streak
+  if (a <= 0) return;
+  ctx.save(); ctx.globalCompositeOperation = 'lighter';
+  const g = ctx.createLinearGradient(x - len, 0, x + len, 0);
+  g.addColorStop(0, 'rgba(120,170,255,0)'); g.addColorStop(.5, `rgba(255,236,200,${.9 * a})`); g.addColorStop(1, 'rgba(120,170,255,0)');
+  ctx.fillStyle = g; ctx.fillRect(x - len, y - 2, len * 2, 4);
+  ctx.globalAlpha = .35 * a; ctx.fillRect(x - len * .6, y - 9, len * 1.2, 18);
+  ctx.restore();
+  ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.translate(x, y); ctx.scale(4, 1); glowDot(0, 0, 60, 'rgba(255,220,170,A)', a); ctx.restore();
+}
+function titleLayout(str, cx, size, ls) {
+  ctx.save(); ctx.font = `900 ${size}px ${F_ZH}`; const ws = [...str].map(c => ctx.measureText(c).width); ctx.restore();
+  const total = ws.reduce((a, b) => a + b, 0) + ls * (ws.length - 1); let x = cx - total / 2;
+  return ws.map(w => { const r = { x: x + w / 2, w, total }; x += w + ls; return r; });
+}
+function titleWord(str, cx, cy, size, lt, t0, stagger, ls, a = 1, grow = .6) {
+  const L = titleLayout(str, cx, size, ls), total = L[0].total, sheenX = cx - total / 2 + (((lt * .32) % 1.8) - .3) * total;
+  ctx.save(); ctx.font = `900 ${size}px ${F_ZH}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  [...str].forEach((ch, i) => {
+    const { x, w } = L[i], k = clamp((lt - t0 - i * stagger) / 1.0);
+    if (k <= 0) return;
+    const e = eexpo(k), sc = 1 + grow * (1 - e);
+    ctx.save(); ctx.translate(x, cy); ctx.scale(sc, sc); ctx.globalAlpha = clamp(k * 2.5) * a;
+    ctx.shadowColor = 'rgba(255,180,80,.55)'; ctx.shadowBlur = 50;
+    ctx.fillStyle = goldGrad(-w / 2, -size / 2, w / 2, size / 2, (sheenX - (x - w / 2)) / w); ctx.fillText(ch, 0, 0);
+    ctx.restore();
+  });
+  ctx.restore();
+}
+function glitchText(s, x, y, size, a, font = F_EN, seed = 0) {
+  if (a <= 0) return;
+  const j = (hash1(seed * 7.1) - .5) * 14;
+  ctx.save(); ctx.globalCompositeOperation = 'lighter';
+  text(s, x - 5 + j, y, { font, size, color: 'rgba(255,60,80,1)', alpha: a * .55 });
+  text(s, x + 5 - j, y, { font, size, color: 'rgba(60,220,255,1)', alpha: a * .55 });
+  ctx.restore();
+  text(s, x, y, { font, size, color: '#fff', alpha: a, glow: 'rgba(255,255,255,.6)', blur: 20 });
+}
+function rollNumber(str, lt, t0, dur, seed = 0) {
+  const n = str.length; let out = '';
+  for (let i = 0; i < n; i++) {
+    const ch = str[i]; if (ch < '0' || ch > '9') { out += ch; continue; }
+    const lock = t0 + dur * i / n; out += lt >= lock ? ch : String(Math.floor(hash1(Math.floor(lt * 30) * 13 + i * 7 + seed) * 10));
+  }
+  return out;
+}
+function panel(x, y, w, h, a) {   // dark glass card behind readouts
+  if (a <= 0) return;
+  ctx.save(); ctx.globalAlpha *= a; ctx.fillStyle = 'rgba(6,10,22,.62)'; ctx.strokeStyle = 'rgba(226,189,107,.35)'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.roundRect(x, y, w, h, 14); ctx.fill(); ctx.stroke(); ctx.restore();
+}
+
+// the hero curve: a point riding a smooth wave, carrying its tangent — the film's emblem
+const HERO = u => -(.34 * Math.sin(2.1 * PI * u + .5) + .13 * Math.sin(5.3 * PI * u + 1.1)) ;
+const HEROD = u => -(.34 * 2.1 * PI * Math.cos(2.1 * PI * u + .5) + .13 * 5.3 * PI * Math.cos(5.3 * PI * u + 1.1));
+function heroXY(u, cx, cy, sx, sy) { return [cx + (u - .5) * 2 * sx, cy + HERO(u) * sy]; }
+const HPTS = (() => {
+  const n = 2400, pts = [];
+  for (let i = 0; i < n; i++) {
+    const u = (i + .5) / n, a = rnd() * TAU, d = 1.4 + rnd() * 2.4;
+    pts.push({ u, sx: Math.cos(a) * d, sy: Math.sin(a) * d * .7, delay: rnd(), ea: rnd() * TAU, ed: .4 + rnd() * 2.4, sz: .8 + rnd() * 1.8, j: (rnd() - .5) * .02 });
+  }
+  return pts;
+})();
+function drawHero(cx, cy, sx, sy, a, upTo = 1, rgb = '150,205,255') {
+  if (a <= 0) return;
+  glowLine(sample(u => HERO(u), 0, upTo, 300).map(([u, y]) => [cx + (u - .5) * 2 * sx, cy + y * sy]), rgb, a, 2.6);
+}
+function heroRider(cx, cy, sx, sy, u, a, len = 260) {     // the moving point and its tangent
+  if (a <= 0) return;
+  const [x, y] = heroXY(u, cx, cy, sx, sy), dx = 2 * sx, dy = HEROD(u) * sy, L = Math.hypot(dx, dy), ux = dx / L, uy = dy / L;
+  glowLine([[x - ux * len, y - uy * len], [x + ux * len, y + uy * len]], '255,205,120', a, 2.4);
+  ctx.save(); ctx.globalCompositeOperation = 'lighter'; glowDot(x, y, 46, 'rgba(255,215,150,A)', a); ctx.restore();
+}
+
+// a 3D camera: yaw about the vertical axis, then pitch; y is up; returns [sx, sy, depth]
+function cam3(yaw, pitch, dist, F, cx, cy) {
+  const cyw = Math.cos(yaw), syw = Math.sin(yaw), cp = Math.cos(pitch), sp = Math.sin(pitch);
+  return ([x, y, z]) => { const X = x * cyw - z * syw, Z = x * syw + z * cyw, Y = y * cp - Z * sp, Z2 = y * sp + Z * cp, d = dist + Z2; return [cx + F * X / d, cy - F * Y / d, d]; };
+}
+// a burst of glowing sparks thrown out from (x, y), age in seconds
+const SPARK = Array.from({ length: 500 }, () => ({ a: rnd() * TAU, v: .25 + rnd() ** .7, s: .6 + rnd() * 1.6, g: rnd() }));
+function sparks(x, y, age, a = 1, n = 500, speed = 900, rgb = '255,214,150') {
+  if (age < 0 || age > 2.6 || a <= 0) return;
+  ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.lineCap = 'round';
+  const fade = a * (1 - age / 2.6) ** 1.5;
+  for (let i = 0; i < n; i++) {
+    const p = SPARK[i], d = speed * p.v * (1 - Math.exp(-age * 2.4)), vx = Math.cos(p.a), vy = Math.sin(p.a);
+    const px = x + vx * d, py = y + vy * d + 90 * age * age * p.g, tail = 4 + 70 * p.v * Math.exp(-age * 3);
+    ctx.strokeStyle = `rgba(${rgb},${fade * (.4 + .6 * p.g)})`; ctx.lineWidth = p.s;
+    ctx.beginPath(); ctx.moveTo(px - vx * tail, py - vy * tail); ctx.lineTo(px, py); ctx.stroke();
+  }
+  ctx.restore();
+}
+function shockRing(x, y, age, a = 1, rgb = '255,225,170') {   // a bright expanding ring drawn in the scene itself
+  if (age < 0 || age > 1.4) return;
+  const r = 40 + 1400 * eout(age / 1.4), al = a * (1 - age / 1.4);
+  ctx.save(); ctx.globalCompositeOperation = 'lighter';
+  for (const [w, k] of [[60, .06], [18, .18], [4, .8]]) { ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.strokeStyle = `rgba(${rgb},${al * k})`; ctx.lineWidth = w; ctx.stroke(); }
+  ctx.restore();
+}
+
+// ======================================================================== scene library
+const SC = [];
+function scene(o) { SC.push(o); return o; }
+const camPush = (amt = .045) => (lt, d) => ({ z: 1 + amt * lt / d, x: 10 * Math.sin(lt * .21), y: 6 * Math.sin(lt * .17 + 1) });
+const camArc = (amt = .04) => (lt, d) => ({ z: 1 + amt * Math.sin(PI * clamp(lt / d)) });
+const HC = { x: W / 2, y: 540, sx: 760, sy: 420 };          // where the hero curve lives in the opening
+
+// ---------------------------------------------------------------- 0. cold open: heartbeat → teaser → question → a point and its tangent
+const TEASER = [[2, 2, 4, '3.14159…'], [5, 3, 6, 'Δx → 0'], [8, 4, 4.5, '∫'], [10, 8, 11, 'dx/dt'], [12, 6, 8, 'Σ'], [14, 7, 3.5, '2.71828…'],
+  [15, 3, 16, 'f′(x)'], [16, 5, 6, '∞'], [17, 7, 10, 'eⁱˣ'], [18, 8, 3, 'F = ma'], [19, 2, 16, 'lim']];
+const TEASE_END = 20 * EIGHTH;
+scene({ start: 0, len: 6, fi: .01, mb: 4, bloom: 1,
+  subs: [[10.9, 13.1, '世界从不静止——', 'The world never stands still—'], [13.3, 15.8, '而微积分，抓住了变化本身。', 'and calculus captures change itself.']],
+  sfx: [[0, 'thump'], ...TEASER.map(([e], i) => [e * EIGHTH, 'hit', { k: .45 + i * .05 }]), [TEASE_END - .45, 'suck', { dur: .45 }], [TEASE_END, 'ring', { dur: 2.5 }],
+    [7.4, 'heart'], [8.9, 'heart'], [10.6, 'sparkle', { dur: 3.2 }], [12.9, 'glide', { dur: 3.2 }], [14.6, 'swell', { dur: 1.4 }]],
+  cam: (lt, d) => lt < TEASE_END ? { z: 1 } : { z: 1 + .06 * (lt - TEASE_END) / (d - TEASE_END) },
+  shot: lt => lt < 2 * EIGHTH ? -1 : lt < TEASE_END ? Math.floor(lt / EIGHTH) : 99,
+  rays: lt => { if (lt < 12.6) return null; const [x, y] = heroXY(.06 + .86 * eio(clamp((lt - 12.9) / 3.1)), HC.x, HC.y, HC.sx, HC.sy); return [x, y, .45 * sstep(12.6, 13.4, lt)]; },
+  draw(lt) {
+    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+    if (lt < 2 * EIGHTH) {                                    // a heartbeat in the dark: the point before it moves
+      const p = Math.exp(-lt * 5) * .9 + .1;
+      ctx.save(); ctx.globalCompositeOperation = 'lighter'; glowDot(W / 2, H / 2, 40 + 60 * p, 'rgba(255,215,160,A)', p); ctx.restore();
+      return;
+    }
+    if (lt < TEASE_END) {                                     // accelerating flash-cuts through the film
+      const e = lt / EIGHTH; let c = TEASER.length - 1; while (TEASER[c][0] > e) c--;
+      const [e0, si, t0, word] = TEASER[c], e1 = c + 1 < TEASER.length ? TEASER[c + 1][0] : 20, f = (lt - e0 * EIGHTH), len = (e1 - e0) * EIGHTH;
+      ctx.save(); const z = 1.14 - .1 * eout(clamp(f / len)); ctx.translate(W / 2, H / 2); ctx.scale(z, z); ctx.translate(-W / 2, -H / 2);
+      SC[si].draw(t0 + f, SC[si].d); ctx.restore();
+      ctx.fillStyle = 'rgba(0,0,0,.45)'; ctx.fillRect(0, 0, W, H);
+      const size = clamp(1350 / Math.max(2.2, word.length * .6), 90, 260);
+      glitchText(word, W / 2, H / 2, size, clamp(f / .05) * (1 - sstep(len - .06, len, f) * .6), F_MATH, c * 13 + Math.floor(f * 30));
+      ctx.fillStyle = `rgba(255,255,255,${.55 * Math.exp(-f * 16)})`; ctx.fillRect(0, 0, W, H);
+      return;
+    }
+    // the question
+    const qa = win(lt, 7.3, 10.75, .45, .4);
+    if (qa > 0) {
+      text('一颗下落的苹果，一条行星的轨道，一笔复利，一次心跳——', W / 2, 470, { size: 54, weight: 700, ls: 5, alpha: qa * sstep(7.3, 7.8, lt), color: '#f3ead8' });
+      text('A falling apple, a planet’s orbit, compound interest, a heartbeat—', W / 2, 532, { font: F_IT, style: 'italic', size: 30, color: '#cfc6b4', alpha: qa * sstep(7.5, 8, lt) });
+      text('怎样抓住「此刻」的变化？', W / 2, 640, { size: 76, weight: 900, ls: 10, alpha: qa * sstep(8.9, 9.35, lt), color: '#fff', glow: 'rgba(255,210,140,.55)', blur: 30 });
+      text('How do you catch change in a single instant?', W / 2, 712, { font: F_IT, style: 'italic', size: 32, color: '#e2cf9f', alpha: qa * sstep(9.1, 9.5, lt) });
+    }
+    if (lt < 10.4) return;
+    // the answer: a curve assembles out of the dark, and a point starts to ride it
+    const k0 = lt - 10.4;
+    glDraw(0, { time: lt + 30, tint: [.12, .2, .55], amp: sstep(0, 2.5, k0) * .85, grid: sstep(1, 4, k0) });
+    ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.fillStyle = '#bfe3ff';
+    for (const p of HPTS) {
+      const k = clamp((k0 - p.delay * 1.6 - Math.abs(p.u - .5) * 1.2) / 1.6); if (k <= 0) continue;
+      const e = eio(k), sw = Math.sin(k * PI) * .5, [tx, ty] = heroXY(p.u, HC.x, HC.y, HC.sx, HC.sy);
+      const x = lerp(HC.x + p.sx * HC.sx * .6, tx, e) + Math.cos(p.ea) * sw * 90, y = lerp(HC.y + p.sy * HC.sy * .6, ty, e) + Math.sin(p.ea) * sw * 90;
+      ctx.globalAlpha = clamp(k * 3) * (.5 + .5 * e) * (1 - .6 * sstep(3.4, 4.4, k0)); ctx.fillRect(x, y, p.sz * (2 - e), p.sz * (2 - e));
+    }
+    ctx.restore();
+    drawHero(HC.x, HC.y, HC.sx, HC.sy, sstep(2.6, 3.8, k0) * .9);
+    heroRider(HC.x, HC.y, HC.sx, HC.sy, .06 + .86 * eio(clamp((lt - 12.9) / 3.1)) , sstep(12.6, 13.2, lt));
+    if (lt > 14.6) { const g = sstep(14.6, 16, lt); ctx.save(); ctx.globalCompositeOperation = 'lighter'; glowDot(W / 2, HC.y, 950 * g, 'rgba(255,230,190,A)', g * .8); ctx.restore(); }
+  } });
+
+// ---------------------------------------------------------------- 1. title: the curve bursts, re-forms as the title, then folds into a circle
+const TITLE = { str: '微积分', size: 230, ls: 70, cy: 430 };
+const CIRC = { x: 620, y: 560, r: 300 };
+let TPTS = null;
+function titlePts() {
+  if (TPTS) return TPTS;
+  const c = document.createElement('canvas'); c.width = W; c.height = H; const x = c.getContext('2d', { willReadFrequently: true });
+  x.font = `900 ${TITLE.size}px ${F_ZH}`; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillStyle = '#fff';
+  titleLayout(TITLE.str, W / 2, TITLE.size, TITLE.ls).forEach((p, i) => x.fillText([...TITLE.str][i], p.x, TITLE.cy));
+  const d = x.getImageData(0, 0, W, H).data, pts = [];
+  for (let y = 0; y < H; y += 3) for (let X = 0; X < W; X += 3) if (d[(y * W + X) * 4 + 3] > 140) pts.push([X, y]);
+  const r = mulberry(77); for (let i = pts.length - 1; i > 0; i--) { const j = Math.floor(r() * (i + 1)); [pts[i], pts[j]] = [pts[j], pts[i]]; }
+  const out = HPTS.map((_, i) => pts.length ? pts[i % pts.length] : [W / 2, TITLE.cy]);
+  if (fontsReady) TPTS = out;
+  return out;
+}
+const RING_SYM = ['lim', '∫', '∂', '∇', 'Σ', 'dx', 'dy', 'eˣ', 'π', '∞', 'Δ', 'f′', '∮', 'ε', 'δ', '∬', 'ln x', 'sin'];
+scene({ start: 6, len: 3, fi: .01, fo: 0, mb: 4, bloom: 1.05,
+  subs: [], sfx: [[.45, 'whoosh', { dur: 1.7 }], [2.0, 'boom'], [2.45, 'shimmer'], [6.8, 'sparkle', { dur: 1.2 }], [6.9, 'whoosh', { dur: 1.1, rev: 1 }]],
+  cam: camArc(.03),
+  rays: lt => [W / 2, TITLE.cy, .75 * win(lt, 1.9, 6.9, .3, .6)],
+  draw(lt) {
+    glDraw(0, { time: lt + 50, tint: [.42, .27, .08], amp: .8 });
+    const cx = W / 2, cy = TITLE.cy, TP = titlePts();
+    ctx.save(); ctx.globalCompositeOperation = 'lighter'; glowDot(cx, cy, 820, 'rgba(255,170,80,A)', .2 * sstep(1.5, 3, lt) * (1 - sstep(6.6, 7.4, lt))); ctx.restore();
+    const partA = (1 - sstep(2.3, 3.1, lt)) + sstep(6.7, 6.95, lt);
+    if (partA > 0) {
+      ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.fillStyle = lt < 6 ? '#ffe2b0' : '#cfe8ff';
+      HPTS.forEach((p, i) => {
+        const [Sx, Sy] = heroXY(p.u, HC.x, HC.y, HC.sx * 1.06, HC.sy * 1.06);
+        const Bx = Sx + Math.cos(p.ea) * (90 + 260 * p.ed), By = Sy + Math.sin(p.ea) * (90 + 260 * p.ed);
+        const [Qx, Qy] = TP[i];
+        let x, y;
+        if (lt < .5) { const e = eout(lt / .5); x = lerp(Sx, Bx, e); y = lerp(Sy, By, e); }
+        else if (lt < 6.7) {
+          const s = eio(clamp((lt - .5 - p.delay * .5) / 1.5)), mx = (Bx + Qx) / 2 + (By - Qy) * .35, my = (By + Qy) / 2 - (Bx - Qx) * .35;
+          x = (1 - s) * (1 - s) * Bx + 2 * (1 - s) * s * mx + s * s * Qx; y = (1 - s) * (1 - s) * By + 2 * (1 - s) * s * my + s * s * Qy;
+        } else {
+          const s = eio(clamp((lt - 6.7 - p.delay * .25) / 1.0)), a = p.u * TAU - PI / 2, Zx = CIRC.x + Math.cos(a) * CIRC.r, Zy = CIRC.y + Math.sin(a) * CIRC.r;
+          x = lerp(Qx, Zx, s) + Math.sin(s * PI) * Math.cos(p.ea) * 70; y = lerp(Qy, Zy, s) + Math.sin(s * PI) * Math.sin(p.ea) * 70;
+        }
+        ctx.globalAlpha = .9 * clamp(partA); ctx.fillRect(x, y, p.sz * 1.3, p.sz * 1.3);
+      });
+      ctx.restore();
+    }
+    const ta = sstep(2.0, 2.7, lt) * (1 - sstep(6.55, 6.95, lt));
+    if (ta > 0) titleWord(TITLE.str, cx, cy, TITLE.size, lt, 1.6, 0, TITLE.ls, ta, 0);
+    shockRing(cx, cy, lt - 2.0, .9); sparks(cx, cy, lt - 2.0, 1, 500, 1300);
+    flare(lerp(cx - 820, cx + 820, eio(clamp((lt - 2.35) / 1.6))), cy, win(lt, 2.35, 4.4, .12, 1.4));
+    RING_SYM.forEach((sym, i) => {
+      const a = i / RING_SYM.length * TAU + lt * .2, z = Math.sin(a), x = cx + Math.cos(a) * 780, y = cy + 40 + z * 180;
+      text(sym, x, y, { font: F_MATH, style: 'italic', size: 28 + 14 * (z + 1), color: '#f0d9a8', alpha: win(lt, 2.8, 6.8, .8, .4) * (.2 + .3 * (z + 1)) * sstep(430, 640, Math.abs(x - cx)) });
+    });
+    text('CALCULUS', cx, cy + 185, { font: F_EN, size: 48, ls: 30, color: '#e6d3a8', alpha: win(lt, 2.9, 6.7, .8, .4) });
+    text('—  变 化 之 美  —', cx, cy + 255, { size: 36, ls: 10, color: '#cbb58a', alpha: win(lt, 3.6, 6.7, .8, .4) });
+    const ca = sstep(7.45, 8, lt);
+    if (ca > 0) { const pts = sample(a => 0, 0, TAU, 160).map(([a]) => [CIRC.x + Math.cos(a) * CIRC.r, CIRC.y + Math.sin(a) * CIRC.r]); glowLine(pts, '150,205,255', ca * .9); }
+  } });
+
+// ---------------------------------------------------------------- 2. limits: Archimedes squeezes π → the Koch snowflake → the Mandelbrot set
+const NSCHED = [[1.0, 6], [2.33, 12], [3.67, 24], [5.0, 48], [6.33, 96]];
+function polyPts(n, R, off = 0) { return Array.from({ length: n }, (_, j) => { const a = (j + off) * TAU / n - PI / 2; return [CIRC.x + Math.cos(a) * R, CIRC.y + Math.sin(a) * R]; }); }
+const KC = { x: 600, y: 580, R: 330 }, KOCH_T0 = 9.8, KLEV = 6;
+const KCACHE = {};
+function kochPts(level, m) {
+  const key = level + ':' + (m === 1 ? 1 : Math.round(m * 200));
+  if (KCACHE[key]) return KCACHE[key];
+  let pts = [0, 1, 2].map(k => { const a = -PI / 2 + k * TAU / 3; return [KC.x + Math.cos(a) * KC.R, KC.y + Math.sin(a) * KC.R]; });
+  for (let L = 0; L < level; L++) {
+    const h = Math.sqrt(3) / 6 * (L === level - 1 ? m : 1), out = [];
+    for (let i = 0; i < pts.length; i++) {
+      const [ax, ay] = pts[i], [bx, by] = pts[(i + 1) % pts.length], dx = bx - ax, dy = by - ay;
+      out.push([ax, ay], [ax + dx / 3, ay + dy / 3], [ax + dx / 2 + dy * h, ay + dy / 2 - dx * h], [ax + 2 * dx / 3, ay + 2 * dy / 3]);
+    }
+    pts = out;
+  }
+  if (m === 1) KCACHE[key] = pts;
+  return pts;
+}
+const MB = { c0: [-.6, 0], c1: [-.743643887037151, .131825904205330], s0: 1.45, s1: 1.2e-4, t0: 15.4, t1: 21.2 };
+const mbE = lt => sstep(MB.t0 + .3, MB.t1, lt);
+scene({ start: 9, len: 8, fi: 0, mb: 3, ch: ['Ⅰ', '极限', 'LIMITS'],
+  subs: [[.5, 4.7, '两千多年前，阿基米德用多边形去逼近一个圆。', 'Over two thousand years ago, Archimedes trapped a circle between polygons.'],
+    [5.0, 9.2, '边数翻倍、再翻倍——π 被越夹越紧。', 'Double the sides, and double again—π is squeezed ever tighter.'],
+    [9.9, 15.0, '科赫雪花：周长趋于无穷，面积却收敛到一个有限值。', 'The Koch snowflake: its perimeter grows without bound, yet its area converges.'],
+    [15.8, 21.0, '极限的边界上，藏着无穷的细节。', 'At the edge of a limit lies infinite detail.']],
+  sfx: [...NSCHED.map(([t], i) => [t, 'pop', { midi: 69 + [0, 3, 5, 7, 12][i] }]), [7.0, 'chime', { midi: 81 }], [9.2, 'whoosh', { dur: .8 }],
+    ...Array.from({ length: KLEV }, (_, k) => [KOCH_T0 + k * BEAT, 'note', { midi: [69, 72, 76, 79, 81, 84][k] }]), [13.9, 'chime', { midi: 88 }],
+    [15.2, 'whoosh', { dur: 1.2 }], [15.5, 'glide', { dur: 5.6 }], [19.8, 'swell', { dur: 1.5 }]],
+  cam: (lt, d) => lt < 15.33 ? camPush(.04)(lt, d) : { z: 1 },
+  rays: lt => lt > 13.6 && lt < 15.4 ? [KC.x, KC.y, .5 * win(lt, 13.7, 15.3, .3, .4)] : null,
+  draw(lt) {
+    if (lt >= 15.33) {                                       // ---- zoom into the Mandelbrot set
+      const e = mbE(lt), ce = eio(clamp(e * 2.2)), sc = MB.s0 * (MB.s1 / MB.s0) ** e;
+      glDraw(2, { c: [lerp(MB.c0[0], MB.c1[0], ce), lerp(MB.c0[1], MB.c1[1], ce)], scale: sc, amp: sstep(15.33, 15.9, lt) });
+      ctx.save(); const g = ctx.createLinearGradient(0, 0, 0, 300); g.addColorStop(0, 'rgba(0,0,0,.85)'); g.addColorStop(1, 'rgba(0,0,0,0)'); ctx.fillStyle = g; ctx.fillRect(0, 0, W, 260); ctx.restore();
+      const ta = sstep(15.8, 16.4, lt);
+      mathRun([['z', {}], ['  ↦  ', { style: '' }], ['z² + c', {}]], 330, 150, { size: 60, alpha: ta, glow: 'rgba(0,0,0,.9)', blur: 14 });
+      text('Mandelbrot · 1980', 330, 222, { font: F_SCRIPT, size: 46, color: '#f3dca8', alpha: sstep(16.4, 17, lt) });
+      const z = MB.s0 / sc;
+      text(`× ${z < 10 ? z.toFixed(1) : Math.round(z).toLocaleString('en-US')}`, 1760, 150, { font: F_MATH, size: 56, color: '#fff', alpha: ta, align: 'right', glow: 'rgba(0,0,0,.9)', blur: 14 });
+      text('放大倍数', 1760, 210, { size: 26, ls: 4, color: '#e8d6ae', alpha: ta, align: 'right' });
+      return;
+    }
+    glDraw(0, { time: lt + 80, tint: [.08, .16, .42], amp: .65, grid: .5 });
+    const A = 1 - sstep(9.0, 9.6, lt);
+    if (A > 0) {                                             // ---- Archimedes
+      ctx.save(); ctx.globalAlpha = A;
+      glowLine(polyPts(160, CIRC.r), '150,205,255', .9, 2.6, true);
+      let i = -1; while (i + 1 < NSCHED.length && lt >= NSCHED[i + 1][0]) i++;
+      if (i >= 0) {
+        const n = NSCHED[i][1], m = eout(clamp((lt - NSCHED[i][0]) / .45)), Rc = CIRC.r / Math.cos(PI / n), base = polyPts(n, CIRC.r);
+        const ins = base.map((p, j) => {
+          if (i === 0 || j % 2 === 0) return p;
+          const a = base[j - 1], b = base[(j + 1) % n];
+          return [lerp((a[0] + b[0]) / 2, p[0], m), lerp((a[1] + b[1]) / 2, p[1], m)];
+        });
+        ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.beginPath(); ins.forEach((p, j) => ctx[j ? 'lineTo' : 'moveTo'](p[0], p[1])); ctx.closePath();
+        ctx.fillStyle = 'rgba(255,190,90,.12)'; ctx.fill(); ctx.restore();
+        glowLine(ins, '255,200,110', .95 * clamp((lt - NSCHED[0][0]) / .3), 2.2, true);
+        if (i > 0 && m < 1) glowLine(polyPts(NSCHED[i - 1][1], CIRC.r / Math.cos(PI / NSCHED[i - 1][1]), .5), '120,240,230', (1 - m) * .8, 2, true);
+        glowLine(polyPts(n, Rc, .5), '120,240,230', .8 * m, 2, true);
+        if (n <= 24) ins.forEach(p => { ctx.save(); ctx.globalCompositeOperation = 'lighter'; glowDot(p[0], p[1], 14, 'rgba(255,220,150,A)', .8); ctx.restore(); });
+        text(`n = ${n}`, CIRC.x, CIRC.y, { font: F_MATH, style: 'italic', size: 64, color: '#fff', glow: 'rgba(255,200,120,.8)', alpha: sstep(1.0, 1.5, lt) });
+        sparks(CIRC.x, CIRC.y, lt - NSCHED[i][0], .35 + .1 * i, 160 + 60 * i, 420, '255,220,160');
+      }
+      const tx = 1080, ty = 200, a0 = sstep(.9, 1.6, lt);
+      panel(tx - 40, ty - 70, 760, 520, a0);
+      text('n', tx + 40, ty - 20, { font: F_MATH, style: 'italic', size: 34, color: '#e2bd6b', alpha: a0 });
+      text('内接  n·sin(π/n)', tx + 260, ty - 20, { size: 28, color: '#ffd28a', alpha: a0 });
+      text('外切  n·tan(π/n)', tx + 540, ty - 20, { size: 28, color: '#8ff0e6', alpha: a0 });
+      NSCHED.forEach(([t, n], j) => {
+        const ra = sstep(t, t + .3, lt) * a0, y = ty + 50 + j * 64;
+        text(String(n), tx + 40, y, { font: F_MATH, size: 36, color: '#fff', alpha: ra });
+        text(rollNumber((n * Math.sin(PI / n)).toFixed(5), lt, t, .5, j), tx + 260, y, { font: F_MATH, size: 38, color: '#ffe3b0', alpha: ra });
+        text(rollNumber((n * Math.tan(PI / n)).toFixed(5), lt, t, .5, j + 9), tx + 540, y, { font: F_MATH, size: 38, color: '#c5fff8', alpha: ra });
+      });
+      const pa = sstep(7.0, 7.5, lt);
+      mathRun([['3.14103', { style: '' }], ['  <  ', { style: '' }], ['π', { size: 1.3, color: '#ffd88a' }], ['  <  ', { style: '' }], ['3.14271', { style: '' }]], tx + 300, ty + 400, { size: 54, alpha: pa, glow: 'rgba(255,210,140,.7)' });
+      text('阿基米德 · 约公元前 250 年', tx + 300, ty + 470, { size: 26, ls: 4, color: '#cdb88e', alpha: pa });
+      ctx.restore();
+    }
+    const B = sstep(9.4, 9.9, lt) * (1 - sstep(15.0, 15.33, lt));
+    if (B <= 0) return;                                      // ---- Koch snowflake
+    let k = 0; while (k < KLEV && lt >= KOCH_T0 + k * BEAT) k++;
+    const m = k ? eout(clamp((lt - KOCH_T0 - (k - 1) * BEAT) / .4)) : 1, pts = kochPts(k, m);
+    ctx.save(); ctx.globalAlpha = B; ctx.beginPath(); pts.forEach((p, j) => ctx[j ? 'lineTo' : 'moveTo'](p[0], p[1])); ctx.closePath();
+    const g = ctx.createRadialGradient(KC.x, KC.y, 0, KC.x, KC.y, KC.R); g.addColorStop(0, 'rgba(120,200,255,.32)'); g.addColorStop(.7, 'rgba(110,90,255,.18)'); g.addColorStop(1, 'rgba(255,120,220,.12)');
+    ctx.fillStyle = g; ctx.fill(); ctx.restore();
+    glowLine(pts, k > 3 ? '200,230,255' : '150,205,255', B, k > 4 ? 1.4 : 2.2, true);
+    if (k) sparks(KC.x, KC.y, lt - KOCH_T0 - (k - 1) * BEAT, B * .4, 120 + 50 * k, 380, '170,220,255');
+    const per = 3 * (4 / 3) ** (k - 1 + m), area = 1 + .6 * (1 - (4 / 9) ** (k - 1 + m));
+    const px = 1450, ra = B * sstep(9.9, 10.4, lt);
+    panel(px - 360, 230, 720, 470, ra);
+    text(`迭代  ${k} 次`, px, 300, { size: 40, weight: 700, color: '#fff', alpha: ra });
+    mathRun([['周长', { font: F_ZH, style: '' }], ['  P = 3·(4/3)', { style: '' }], ['ⁿ', {}], [' = ' + (k ? per : 3).toFixed(3), { style: '' }]], px, 400, { size: 40, alpha: ra, color: '#ffe0b0' });
+    mathRun([['面积', { font: F_ZH, style: '' }], ['  S = ' + (k ? area : 1).toFixed(4) + ' S', { style: '' }], ['₀', { size: .7, dy: .15 }]], px, 480, { size: 40, alpha: ra, color: '#c5fff8' });
+    const la = B * sstep(13.9, 14.4, lt);
+    mathRun([['P → ∞', {}]], px - 160, 600, { size: 50, alpha: la, color: '#ffd88a', glow: 'rgba(255,200,110,.8)' });
+    mathRun([['S → 8/5 · S', {}], ['₀', { size: .7, dy: .15 }]], px + 150, 600, { size: 50, alpha: la, color: '#9ff6ff', glow: 'rgba(120,220,255,.8)' });
+  } });
+
+// ---------------------------------------------------------------- 3. the derivative: secant → tangent → f′ → a tangent plane on a surface
+const fD = x => 1.3 + .9 * Math.sin(1.1 * x - .3) + .12 * x, dD = x => .99 * Math.cos(1.1 * x - .3) + .12;
+const DX0 = 2.2, HSTEPS = 10, H0 = 3.6, D_T0 = 1.33;
+const dSweep = lt => .25 + 7.5 * sstep(10.6, 16.0, lt);
+const D_ZEROS = (() => { const z = []; let prev = dSweep(10.6); for (let t = 10.6; t < 16; t += .005) { const x = dSweep(t); if (Math.sign(dD(x)) !== Math.sign(dD(prev))) z.push([t, x]); prev = x; } return z; })();
+function dH(lt) {
+  if (lt < D_T0) return H0;
+  const j = Math.min(HSTEPS - 1, Math.floor((lt - D_T0) / BEAT)), f = (lt - D_T0) / BEAT - j;
+  return H0 * .5 ** (j + (j === HSTEPS - 1 && f > 1 ? 1 : eout(clamp(f / .35))));
+}
+const SF = (x, y) => .9 * Math.sin(x) * Math.cos(.8 * y) + .12 * x, SFx = (x, y) => .9 * Math.cos(x) * Math.cos(.8 * y) + .12, SFy = (x, y) => -.72 * Math.sin(x) * Math.sin(.8 * y);
+function drawSurface(lt, a) {
+  const P = cam3(.7 + .13 * (lt - 16.4), .5, 12, 1300, W / 2 - 40, 640), HS = 1.25, N = 34, M = 70, L = 3.2;
+  const V = (x, y) => P([x, SF(x, y) * HS, y]);
+  // floor grid for depth
+  ctx.save(); ctx.globalAlpha = a * .5; ctx.strokeStyle = 'rgba(120,150,255,.18)'; ctx.lineWidth = 1; ctx.beginPath();
+  for (let i = 0; i <= 12; i++) { const u = -L + 2 * L * i / 12; let p = P([u, -1.9, -L]), q = P([u, -1.9, L]); ctx.moveTo(p[0], p[1]); ctx.lineTo(q[0], q[1]); p = P([-L, -1.9, u]); q = P([L, -1.9, u]); ctx.moveTo(p[0], p[1]); ctx.lineTo(q[0], q[1]); }
+  ctx.stroke(); ctx.restore();
+  ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.lineCap = 'round';
+  for (const dir of [0, 1]) for (let i = 0; i <= N; i++) {
+    const u = -L + 2 * L * i / N; let prev = null, ph = 0;
+    for (let k = 0; k <= M; k++) {
+      const v = -L + 2 * L * k / M, x = dir ? u : v, y = dir ? v : u, p = V(x, y), h = SF(x, y);
+      if (prev) {
+        const t = clamp((h + 1.1) / 2.4), depth = clamp((15 - p[2]) / 8);
+        ctx.strokeStyle = `rgba(${hueRGB(225 - 190 * t, .85, .62)},${a * (.25 + .55 * depth)})`; ctx.lineWidth = 1.2 + 1.2 * depth;
+        ctx.beginPath(); ctx.moveTo(prev[0], prev[1]); ctx.lineTo(p[0], p[1]); ctx.stroke();
+      }
+      prev = p; ph = h;
+    }
+  }
+  ctx.restore();
+  // the tangent plane rides a loop over the surface
+  const tau = (lt - 17) * .55, x0 = 2.1 * Math.cos(tau), y0 = 1.9 * Math.sin(tau), z0 = SF(x0, y0), fx = SFx(x0, y0), fy = SFy(x0, y0), s = .95;
+  const Q = (dx, dy) => P([x0 + dx, (z0 + fx * dx + fy * dy) * HS, y0 + dy]);
+  const quad = [Q(-s, -s), Q(s, -s), Q(s, s), Q(-s, s)], pa = a * sstep(17.0, 17.6, lt);
+  ctx.save(); ctx.globalAlpha = pa; ctx.beginPath(); quad.forEach((p, i) => ctx[i ? 'lineTo' : 'moveTo'](p[0], p[1])); ctx.closePath();
+  ctx.fillStyle = 'rgba(255,200,110,.22)'; ctx.fill(); ctx.restore();
+  glowLine(quad, '255,210,130', pa, 2, true);
+  const g = Math.hypot(fx, fy) || 1, st = .9 / g, p0 = V(x0, y0), p1 = P([x0 + fx * st, (z0 + g * g * st) * HS, y0 + fy * st]);
+  glowLine([p0, p1], '140,255,210', pa, 3);
+  ctx.save(); ctx.globalCompositeOperation = 'lighter'; glowDot(p0[0], p0[1], 40, 'rgba(255,220,160,A)', pa); glowDot(p1[0], p1[1], 26, 'rgba(140,255,210,A)', pa); ctx.restore();
+  text('∇f', p1[0] + 30, p1[1] - 26, { font: F_MATH, style: 'italic', size: 40, color: '#9fffd8', alpha: pa });
+  text('切平面', quad[2][0] + 20, quad[2][1], { size: 30, weight: 700, color: '#ffd88a', alpha: pa, align: 'left' });
+}
+scene({ start: 17, len: 9, mb: 3, ch: ['Ⅱ', '导数', 'THE DERIVATIVE'],
+  subs: [[.6, 5.0, '割线的两个端点，一拍一拍地靠近……', 'The two ends of the secant draw closer, beat by beat...'],
+    [5.4, 9.8, '……直到重合，变成切线。它的斜率，叫做导数。', '...until they meet, and it becomes the tangent. Its slope is the derivative.'],
+    [10.6, 16.0, '切线滑过曲线，导数记下每一刻的变化率；山顶与谷底，斜率为零。', "As the tangent glides, the derivative records each instant's rate of change—zero at every peak and valley."],
+    [17.2, 23.4, '升到三维：切线变成切平面，梯度指向最陡的上坡。', 'In three dimensions the tangent becomes a tangent plane, and the gradient points straight uphill.']],
+  sfx: [[.2, 'whoosh', { dur: 1 }], ...Array.from({ length: HSTEPS }, (_, j) => [D_T0 + j * BEAT, 'tick', { gain: .6 + j * .04, pitch: 1 + j * .07 }]),
+    [8.0, 'ding', { midi: 88 }], [8.2, 'quill', { dur: 1.3 }], [10.0, 'whoosh', { dur: 1 }], [10.6, 'glide', { dur: 5.4 }], ...D_ZEROS.map(([t]) => [t, 'chime', { midi: 86 }]),
+    [16.2, 'whoosh', { dur: 1.2, rev: 1 }], [16.4, 'swell', { dur: 1 }], [17.4, 'shimmer'], [17.6, 'glide', { dur: 6 }]],
+  cam: (lt, d) => lt < 16.4 ? camPush(.04)(lt, 16.4) : { z: 1 + .05 * (lt - 16.4) / (d - 16.4) },
+  rays: lt => lt > 7.9 && lt < 10.4 ? [1470, 620, .35 * win(lt, 7.9, 10.3, .3, .5)] : null,
+  draw(lt) {
+    glDraw(0, { time: lt + 110, tint: [.07, .14, .36], amp: .6, grid: .6 * (1 - sstep(16, 16.6, lt)) });
+    const kc = sstep(16.2, 16.9, lt);
+    if (kc > 0) drawSurface(lt, sstep(16.4, 17.2, lt));
+    if (kc >= 1) {
+      text('z = f(x, y)', 1640, 210, { font: F_MATH, style: 'italic', size: 52, color: '#fff', alpha: sstep(17.4, 18, lt), glow: 'rgba(150,200,255,.7)' });
+      mathRun([['∇f = (', { style: '' }], ['∂f/∂x', {}], [', ', { style: '' }], ['∂f/∂y', {}], [')', { style: '' }]], 1600, 290, { size: 40, alpha: sstep(18.2, 18.8, lt), color: '#9fffd8' });
+      return;
+    }
+    ctx.save(); ctx.globalAlpha = 1 - kc;
+    const kb = sstep(10.0, 10.8, lt), X = x => 200 + x * 190, Yb = lerp(800, 520, kb), Ys = lerp(170, 115, kb), Y = y => Yb - y * Ys;
+    axes(X, Y, -.3, 8.3, -.4, 3.6, sstep(0, .6, lt));
+    glowLine(sample(fD, 0, 8, 260).map(([x, y]) => [X(x), Y(y)]), '150,205,255', sstep(.1, 1, lt) * (1 - kc));
+    text('f(x)', X(.25), Y(fD(.25)) + 48, { font: F_MATH, style: 'italic', size: 40, color: '#bfe0ff', alpha: sstep(.5, 1, lt) * (1 - kc) });
+    const A = 1 - kb;
+    if (A > 0 && lt > .8) {
+      const h = dH(lt), x0 = DX0, x1 = x0 + h, y0 = fD(x0), y1 = fD(x1), s = (y1 - y0) / h, tight = clamp(Math.log2(H0 / h) / HSTEPS), a = sstep(.8, 1.3, lt) * A;
+      const col = `255,${lerp(90, 205, tight) | 0},${lerp(170, 120, tight) | 0}`;
+      glowLine([-2.0, 3.6].map(d => [X(x0 + d), Y(y0 + s * d)]), col, a, 2.4);
+      ctx.save(); ctx.globalAlpha = a * clamp(h * 3); ctx.setLineDash([10, 8]); ctx.strokeStyle = 'rgba(220,230,255,.7)'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(X(x0), Y(y0)); ctx.lineTo(X(x1), Y(y0)); ctx.lineTo(X(x1), Y(y1)); ctx.stroke(); ctx.restore();
+      text('Δx', (X(x0) + X(x1)) / 2, Y(y0) + 34, { font: F_MATH, style: 'italic', size: 32, color: '#dfe6ff', alpha: a * clamp(h * 2) });
+      text('Δy', X(x1) + 40, (Y(y0) + Y(y1)) / 2, { font: F_MATH, style: 'italic', size: 32, color: '#dfe6ff', alpha: a * clamp(h * 2) });
+      ctx.save(); ctx.globalCompositeOperation = 'lighter'; glowDot(X(x0), Y(y0), 34, 'rgba(255,215,150,A)', a); glowDot(X(x1), Y(y1), 30, 'rgba(255,120,190,A)', a * clamp(h * 4)); ctx.restore();
+      text('P', X(x0) - 30, Y(y0) - 34, { font: F_MATH, style: 'italic', size: 34, color: '#ffe0b0', alpha: a });
+      text('Q', X(x1) + 26, Y(y1) - 34, { font: F_MATH, style: 'italic', size: 34, color: '#ffb0d8', alpha: a * clamp(h * 3) });
+      if (lt >= D_T0) { const j = Math.min(HSTEPS - 1, Math.floor((lt - D_T0) / BEAT)); sparks(X(x1), Y(y1), lt - D_T0 - j * BEAT, a * .45, 90, 260, '255,150,210'); }
+      sparks(X(x0), Y(y0), lt - 8.0, a * .8, 400, 700);
+      const ra = sstep(1.3, 1.9, lt) * A * (1 - sstep(7.8, 8.2, lt));
+      panel(1250, 520, 560, 200, ra);
+      mathRun([['h', {}], [' = ' + h.toFixed(4), { style: '' }]], 1530, 580, { size: 46, alpha: ra });
+      mathRun([['Δy / Δx', {}], [' = ' + s.toFixed(4), { style: '' }]], 1530, 660, { size: 46, alpha: ra, color: '#ffe0b0' });
+      const fa = sstep(8.1, 8.7, lt) * A;
+      if (fa > 0) {
+        panel(1080, 490, 780, 290, fa);
+        const fx = 1130, fy = 600;
+        mathRun([['f′(x) = ', {}]], fx, fy, { size: 58, align: 'left', alpha: fa, glow: 'rgba(255,210,140,.6)' });
+        text('lim', fx + 240, fy - 8, { font: F_MATH, size: 56, color: '#fff', alpha: fa, align: 'left' });
+        mathRun([['h→0', { size: .55 }]], fx + 248, fy + 44, { size: 56, align: 'left', alpha: fa });
+        mathRun([['f(x + h) − f(x)', {}]], fx + 560, fy - 40, { size: 50, alpha: fa });
+        ctx.save(); ctx.globalAlpha = fa; ctx.fillStyle = '#fff'; ctx.fillRect(fx + 375, fy - 2, 370, 3); ctx.restore();
+        mathRun([['h', {}]], fx + 560, fy + 46, { size: 50, alpha: fa });
+        text(`f′(${DX0}) ≈ ${dD(DX0).toFixed(4)}`, 1470, 728, { font: F_MATH, size: 34, color: '#ffe0b0', alpha: fa });
+      }
+      text('切线', X(x0 + 3.0), Y(y0 + dD(x0) * 3.0) - 40, { size: 36, weight: 700, color: '#ffd88a', alpha: sstep(8.0, 8.5, lt) * A });
+    }
+    if (kb > 0) {
+      const Y2 = v => 790 - v * 95, xr = dSweep(lt), a = kb;
+      ctx.save(); ctx.globalAlpha *= a; ctx.strokeStyle = 'rgba(190,210,255,.45)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(X(-.3), Y2(0)); ctx.lineTo(X(8.3), Y2(0)); ctx.stroke(); ctx.restore();
+      text('f′(x)', X(-.1), Y2(1.25), { font: F_MATH, style: 'italic', size: 38, color: '#ffd28a', alpha: a, align: 'left' });
+      glowLine(sample(dD, .25, xr, 220).map(([x, y]) => [X(x), Y2(y)]), '255,200,110', a);
+      const y0 = fD(xr), s = dD(xr);
+      glowLine([-1.1, 1.1].map(d => [X(xr + d), Y(y0 + s * d)]), '255,205,120', a, 2.4);
+      ctx.save(); ctx.globalAlpha *= a * .8; ctx.setLineDash([6, 8]); ctx.strokeStyle = 'rgba(255,220,160,.6)'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(X(xr), Y(y0)); ctx.lineTo(X(xr), Y2(s)); ctx.stroke(); ctx.restore();
+      ctx.save(); ctx.globalCompositeOperation = 'lighter'; glowDot(X(xr), Y(y0), 34, 'rgba(255,215,150,A)', a); glowDot(X(xr), Y2(s), 28, 'rgba(255,200,110,A)', a); ctx.restore();
+      text(`斜率 ${s >= 0 ? '+' : '−'}${Math.abs(s).toFixed(2)}`, X(xr) + 30, Y(y0) - 56, { size: 30, color: '#ffe8c0', alpha: a * sstep(10.6, 11.1, lt), align: 'left' });
+      D_ZEROS.forEach(([t, x]) => {
+        const e = sstep(t, t + .2, lt); if (e <= 0) return; const pulse = Math.exp(-(lt - t) * 3);
+        ctx.save(); ctx.globalCompositeOperation = 'lighter'; glowDot(X(x), Y(fD(x)), 30 + 60 * pulse, 'rgba(140,255,220,A)', e * (.6 + pulse)); glowDot(X(x), Y2(0), 24 + 40 * pulse, 'rgba(140,255,220,A)', e * (.6 + pulse)); ctx.restore();
+        glowLine([[X(x) - 90, Y(fD(x))], [X(x) + 90, Y(fD(x))]], '140,255,220', e * .7, 2);
+        sparks(X(x), Y(fD(x)), lt - t, .6, 160, 360, '140,255,220');
+      });
+    }
+    ctx.restore();
+  } });
+
+// ---------------------------------------------------------------- 4. the integral: Riemann sums → the long S → πr² → a solid of revolution
+const gI = x => 1.2 + .7 * Math.sin(1.2 * x - .5) + .18 * x, IA = .5, IB = 6.5;
+const I_EXACT = (() => { const n = 2000, h = (IB - IA) / n; let s = gI(IA) + gI(IB); for (let i = 1; i < n; i++) s += (i % 2 ? 4 : 2) * gI(IA + i * h); return s * h / 3; })();
+const ISCHED = Array.from({ length: 9 }, (_, k) => [1.0 + k * BEAT, 2 ** (k + 1)]);
+const riemann = n => { const h = (IB - IA) / n; let s = 0; for (let j = 0; j < n; j++) s += gI(IA + j * h) * h; return s; };
+const DISK = { x: 430, y: 470, R: 170, N: 26, tx: 1290, ty: 800 };
+const rS = x => .82 + .36 * Math.sin(1.3 * x + .4) + .07 * x, SX0 = -2.8, SX1 = 2.8, NDISC = 44;
+const VOL = (() => { const n = 400, h = (SX1 - SX0) / n; let s = 0; for (let i = 0; i < n; i++) s += PI * rS(SX0 + (i + .5) * h) ** 2 * h; return s; })();
+function drawSolid(lt, a) {
+  const P = cam3(-.55 + .16 * (lt - 16), .34, 10, 1650, W / 2 - 120, 560);
+  glowLine([P([SX0 - .6, 0, 0]), P([SX1 + .6, 0, 0])], '200,210,255', a * .5, 1.4);
+  for (let k = 0; k < NDISC; k++) {
+    const x = SX0 + (SX1 - SX0) * (k + .5) / NDISC, e = eout(clamp((lt - 16.3 - k * 2.2 / NDISC) / .35)); if (e <= 0) continue;
+    const r = rS(x) * e, pts = Array.from({ length: 49 }, (_, q) => { const f = q / 48 * TAU; return P([x, r * Math.cos(f), r * Math.sin(f)]); });
+    ctx.save(); ctx.globalAlpha = a; ctx.beginPath(); pts.forEach((p, q) => ctx[q ? 'lineTo' : 'moveTo'](p[0], p[1])); ctx.fillStyle = `rgba(${hueRGB(30 + 30 * k / NDISC, .9, .55)},.07)`; ctx.fill(); ctx.restore();
+    glowLine(pts, hueRGB(28 + 40 * k / NDISC, .9, .62), a * (.55 + .45 * e), 1.3);
+  }
+  const ma = a * sstep(18.3, 19.2, lt);
+  for (let q = 0; q < 20; q++) {
+    const f = q / 20 * TAU + (lt - 16) * .3;
+    glowLine(sample(rS, SX0, SX1, 60).map(([x, r]) => P([x, r * Math.cos(f), r * Math.sin(f)])), '150,205,255', ma * .55, 1.1);
+  }
+}
+scene({ start: 26, len: 8, mb: 3, ch: ['Ⅲ', '积分', 'THE INTEGRAL'],
+  subs: [[.5, 5.6, '把面积切成细条，再全部加起来。', 'Slice the area into strips, then add them all up.'],
+    [5.9, 11.0, '条越细，和越准。莱布尼茨把这个「无穷求和」写成一个拉长的 S。', 'The thinner the strips, the truer the sum. Leibniz wrote this infinite sum as a long S.'],
+    [11.8, 15.8, '把圆切成圆环再展开——就是一个三角形：πr²。', 'Cut a disk into rings and unroll them—a triangle: πr².'],
+    [16.4, 21.0, '让曲线旋转，无数薄片叠成体积。', 'Spin the curve, and countless thin discs stack into a volume.']],
+  sfx: [...ISCHED.map(([t], k) => [t, 'pop', { midi: [72, 74, 76, 79, 81, 84, 86, 88, 91][k] }]), [6.6, 'ding', { midi: 84 }], [7.6, 'quill', { dur: 1.3 }], [8.8, 'shimmer'], [9.4, 'chime', { midi: 81 }],
+    [11.3, 'whoosh', { dur: .8 }], [12.4, 'whoosh', { dur: 2.0 }], [14.6, 'chime', { midi: 86 }], [15.9, 'whoosh', { dur: .9 }], [16.3, 'glide', { dur: 2.4 }], [18.8, 'chime', { midi: 88 }], [19.0, 'sparkle', { dur: 2 }]],
+  cam: (lt, d) => lt < 16 ? camPush(.035)(lt, 16) : { z: 1 + .05 * (lt - 16) / (d - 16) },
+  rays: lt => lt > 7.5 && lt < 11.4 ? [1440, 500, .6 * win(lt, 7.6, 11.3, .4, .5)] : lt > 14.4 && lt < 16 ? [DISK.tx, 470, .35 * win(lt, 14.5, 15.9, .3, .4)] : lt > 18.6 ? [1500, 200, .3 * sstep(18.6, 19.4, lt)] : null,
+  draw(lt) {
+    glDraw(0, { time: lt + 150, tint: [.1, .12, .38], amp: .6, grid: .5 * (1 - sstep(11, 12, lt)) });
+    const A = 1 - sstep(11.0, 11.6, lt), X = x => 260 + x * 200, Y = y => 820 - y * 160;
+    if (A > 0) {
+      ctx.save(); ctx.globalAlpha = A * (1 - .55 * sstep(7.3, 8.0, lt));
+      axes(X, Y, -.2, 7.2, -.3, 3.6, sstep(0, .6, lt));
+      let k = -1; while (k + 1 < ISCHED.length && lt >= ISCHED[k + 1][0]) k++;
+      const smooth = sstep(6.6, 7.4, lt);
+      if (k >= 0 && smooth < 1) {
+        const n = ISCHED[k][1], m = eout(clamp((lt - ISCHED[k][0]) / .3)), h = (IB - IA) / n;
+        for (let j = 0; j < n; j++) {
+          const x = IA + j * h, hp = k ? gI(IA + (j >> 1) * h * 2) : gI(x), y = lerp(hp, gI(x), m);
+          ctx.fillStyle = hsl(195 + 60 * j / n, 75, 50, .55 * (1 - smooth)); ctx.fillRect(X(x), Y(y), X(x + h) - X(x), Y(0) - Y(y));
+          if (n <= 64) { ctx.strokeStyle = `rgba(255,230,180,${.7 * (1 - smooth)})`; ctx.lineWidth = 1.5; ctx.strokeRect(X(x), Y(y), X(x + h) - X(x), Y(0) - Y(y)); }
+        }
+        ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.fillStyle = `rgba(255,255,255,${.25 * Math.exp(-(lt - ISCHED[k][0]) * 6)})`; ctx.fillRect(X(IA), Y(3.2), X(IB) - X(IA), Y(0) - Y(3.2)); ctx.restore();
+      }
+      if (smooth > 0) {
+        ctx.beginPath(); ctx.moveTo(X(IA), Y(0)); sample(gI, IA, IB, 160).forEach(([x, y]) => ctx.lineTo(X(x), Y(y))); ctx.lineTo(X(IB), Y(0)); ctx.closePath();
+        const g = ctx.createLinearGradient(0, Y(3), 0, Y(0)); g.addColorStop(0, `rgba(255,200,110,${.55 * smooth})`); g.addColorStop(1, `rgba(120,150,255,${.25 * smooth})`); ctx.fillStyle = g; ctx.fill();
+      }
+      glowLine(sample(gI, -.1, 7, 240).map(([x, y]) => [X(x), Y(y)]), '150,205,255', sstep(.1, 1, lt));
+      ctx.restore();
+      const ra = sstep(.9, 1.4, lt) * A * (1 - sstep(7.2, 7.7, lt));
+      if (k >= 0) {
+        panel(1240, 96, 600, 190, ra);
+        mathRun([['n', {}], [' = ' + ISCHED[k][1], { style: '' }]], 1540, 150, { size: 48, alpha: ra });
+        mathRun([['Σ f(xᵢ) Δx', {}], [' = ' + riemann(ISCHED[k][1]).toFixed(5), { style: '' }]], 1540, 228, { size: 44, alpha: ra, color: '#ffe0b0' });
+      }
+      const sa = sstep(7.5, 7.9, lt) * A, rev = eio(clamp((lt - 7.6) / 1.2));
+      if (sa > 0) {
+        const sx = 1440, sy = 500;
+        ctx.save(); ctx.beginPath(); ctx.rect(sx - 300, sy - 360, 600, 720 * rev); ctx.clip();
+        text('∫', sx, sy, { font: F_MATH, style: 'italic', size: 560, color: goldGrad(sx - 120, sy - 300, sx + 120, sy + 300, (lt * .3) % 1.4), alpha: sa, glow: 'rgba(255,190,90,.7)', blur: 50 });
+        ctx.restore();
+        if (rev < 1) { ctx.save(); ctx.globalCompositeOperation = 'lighter'; glowDot(sx + 70 * Math.sin(rev * PI * 1.6), sy - 300 + 620 * rev, 70, 'rgba(255,220,160,A)', sa); ctx.restore(); }
+        sparks(sx, sy, lt - 8.8, A, 500, 1100);
+        shockRing(sx, sy, lt - 8.8, A * .7);
+        text('Leibniz · 1675', sx, 836, { font: F_SCRIPT, size: 64, color: '#f3dca8', alpha: sstep(9.0, 9.7, lt) * A });
+        text('拉长的 S —— Summa，求和', sx, 900, { size: 30, ls: 4, color: '#d9c49a', alpha: sstep(9.3, 10.0, lt) * A });
+        mathRun([['∫', { size: 1.2 }], ['f(x) dx', {}], [' = ' + I_EXACT.toFixed(5), { style: '' }]], X(3.5), 160, { size: 48, alpha: sstep(8.6, 9.2, lt) * A, glow: 'rgba(255,210,140,.6)' });
+      }
+    }
+    const B = sstep(11.3, 11.8, lt) * (1 - sstep(15.8, 16.3, lt));
+    if (B > 0) {                                             // ---- the disk → a triangle
+      const D = DISK, dr = D.R / D.N, e = eio(clamp((lt - 12.4) / 2.0));
+      ctx.save(); ctx.globalAlpha = B; ctx.lineCap = 'butt';
+      for (let i = 0; i < D.N; i++) {
+        const r = (i + .5) * dr, ax = lerp(D.x, D.tx, e), ay = lerp(D.y + r, D.ty - (D.R - r) - dr / 2, e), Rp = e > .999 ? 1e9 : r / (1 - e);
+        ctx.beginPath();
+        for (let q = 0; q <= 90; q++) {
+          const s = (q / 90 - .5) * TAU * r, ph = s / Rp, x = Rp > 1e8 ? ax + s : ax + Rp * Math.sin(ph), y = Rp > 1e8 ? ay : ay - Rp + Rp * Math.cos(ph);
+          q ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+        }
+        ctx.strokeStyle = hsl(30 + 170 * i / D.N, 75, 55 + 10 * Math.sin(i), .95); ctx.lineWidth = dr * .9; ctx.stroke();
+      }
+      ctx.restore();
+      const la = (1 - sstep(12.2, 12.6, lt)) * B;
+      glowLine([[D.x, D.y], [D.x + D.R, D.y]], '255,255,255', la, 2);
+      text('r', D.x + D.R / 2, D.y - 26, { font: F_MATH, style: 'italic', size: 40, color: '#fff', alpha: la });
+      const fa = sstep(14.3, 14.8, lt) * B;
+      if (fa > 0) {
+        const L = TAU * D.R, bx0 = D.tx - L / 2, by = D.ty + 10;
+        glowLine([[bx0, by + 20], [bx0 + L, by + 20]], '255,220,160', fa, 2);
+        text('2πr', D.tx, by + 58, { font: F_MATH, style: 'italic', size: 40, color: '#ffe0b0', alpha: fa });
+        glowLine([[D.tx + 30, D.ty], [D.tx + 30, D.ty - D.R]], '255,220,160', fa * .8, 2);
+        text('r', D.tx + 58, D.ty - D.R / 2, { font: F_MATH, style: 'italic', size: 40, color: '#ffe0b0', alpha: fa });
+        mathRun([['½ · 2πr · r = ', { style: '' }], ['πr²', { color: '#ffd88a' }]], D.tx, 470, { size: 80, alpha: sstep(14.6, 15.1, lt) * B, glow: 'rgba(255,200,120,.8)', blur: 30 });
+        sparks(D.tx, 470, lt - 14.6, B * .7, 300, 700);
+      }
+    }
+    const C = sstep(15.9, 16.4, lt);
+    if (C > 0) {                                             // ---- solid of revolution
+      drawSolid(lt, C);
+      const fa = sstep(18.8, 19.4, lt);
+      panel(1250, 110, 600, 220, fa);
+      mathRun([['V = ', {}], ['∫', { size: 1.25 }], [' π f(x)² dx', {}]], 1550, 190, { size: 58, alpha: fa, glow: 'rgba(255,210,140,.7)' });
+      text(`= ${VOL.toFixed(3)}`, 1550, 275, { font: F_MATH, size: 44, color: '#ffe0b0', alpha: sstep(19.4, 19.9, lt) });
+      text('旋转体', 1550, 380, { size: 36, weight: 700, ls: 10, color: '#f3e3bd', alpha: sstep(17, 17.6, lt) });
+    }
+  } });
+
+// ---------------------------------------------------------------- 5. the fundamental theorem: accumulation and slope are the same story
+const fF = t => .3 + .9 * Math.sin(1.1 * t), AF = x => .3 * x + .9 / 1.1 * (1 - Math.cos(1.1 * x));
+const ftcX = lt => 6.8 * sstep(1.0, 10.0, lt);
+scene({ start: 34, len: 7, mb: 3, ch: ['Ⅳ', '基本定理', 'THE FUNDAMENTAL THEOREM'],
+  subs: [[.5, 5.8, '两个看似无关的问题：切线，与面积。', 'Two seemingly unrelated problems: tangents and areas.'],
+    [6.2, 10.4, '面积积累的速度，恰好就是曲线此刻的高度。', 'The rate at which area accumulates is exactly the height of the curve.'],
+    [11.2, 17.9, '微分与积分互为逆运算——这就是微积分基本定理。', 'Differentiation and integration undo each other—the Fundamental Theorem of Calculus.']],
+  sfx: [[.1, 'whoosh', { dur: 1.2 }], [1.0, 'glide', { dur: 9 }], [10.67, 'stamp'], [10.75, 'shimmer'], [13.2, 'chime', { midi: 81 }], [15.2, 'chime', { midi: 88 }]],
+  cam: camPush(.035), grade: { split: .6 },
+  rays: lt => lt > 10.6 ? [W / 2, 520, .65 * win(lt, 10.67, 18.67, .2, 1.2)] : null,
+  draw(lt) {
+    glDraw(0, { time: lt + 190, tint: [.32, .2, .08], amp: .55, grid: .4 });
+    const X = x => 300 + x * 190, Yt = y => 330 - y * 130, Yb = A => 880 - A * 80, xs = ftcX(lt), dim = 1 - .8 * sstep(10.2, 11, lt), a0 = sstep(0, .7, lt) * dim;
+    axes(X, Yt, -.2, 7.3, -.9, 1.6, a0); axes(X, Yb, -.2, 7.3, -.2, 3.4, a0);
+    // accumulated area, gold above the axis, blue below
+    ctx.save(); ctx.globalAlpha = a0;
+    const n = 220;
+    for (let i = 0; i < n; i++) {
+      const x = xs * i / n, w = xs / n, y = fF(x + w / 2);
+      ctx.fillStyle = y >= 0 ? 'rgba(255,190,90,.42)' : 'rgba(90,150,255,.45)';
+      ctx.fillRect(X(x), Math.min(Yt(y), Yt(0)), X(x + w) - X(x) + .6, Math.abs(Yt(y) - Yt(0)));
+    }
+    ctx.restore();
+    glowLine(sample(fF, 0, 7, 200).map(([x, y]) => [X(x), Yt(y)]), '150,205,255', a0);
+    glowLine(sample(AF, 0, xs, 200).map(([x, y]) => [X(x), Yb(y)]), '255,200,110', a0);
+    text('f(t)', X(7.15), Yt(fF(7)) - 30, { font: F_MATH, style: 'italic', size: 38, color: '#bfe0ff', alpha: a0, align: 'left' });
+    mathRun([['A(x) = ', {}], ['∫', { size: 1.3 }], ['₀', { size: .6, dy: .3 }], ['ˣ', { size: .9, dy: -.4 }], [' f(t) dt', {}]], X(.2), Yb(3.2), { size: 40, align: 'left', alpha: a0, color: '#ffe0b0' });
+    if (lt > 1.0) {
+      const fa = sstep(1.0, 1.5, lt) * dim, A = AF(xs), s = fF(xs);
+      ctx.save(); ctx.globalAlpha = fa * .8; ctx.setLineDash([6, 8]); ctx.strokeStyle = 'rgba(255,230,180,.6)'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(X(xs), Yt(fF(xs))); ctx.lineTo(X(xs), Yb(A)); ctx.stroke(); ctx.restore();
+      glowLine([[X(xs), Yt(0)], [X(xs), Yt(s)]], '255,240,200', fa, 3);            // the height f(x)…
+      glowLine([-.9, .9].map(d => [X(xs + d), Yb(A + s * d)]), '255,205,120', fa, 2.4);   // …is the slope of A
+      ctx.save(); ctx.globalCompositeOperation = 'lighter'; glowDot(X(xs), Yt(s), 26, 'rgba(200,230,255,A)', fa); glowDot(X(xs), Yb(A), 30, 'rgba(255,210,140,A)', fa); ctx.restore();
+      panel(1560, 380, 330, 210, sstep(2, 2.6, lt) * dim);
+      mathRun([['f(x)', {}], [' = ' + (s >= 0 ? ' ' : '−') + Math.abs(s).toFixed(3), { style: '' }]], 1725, 440, { size: 40, alpha: sstep(2, 2.6, lt) * dim, color: '#cfe6ff' });
+      mathRun([['A′(x)', {}], [' = ' + (s >= 0 ? ' ' : '−') + Math.abs(s).toFixed(3), { style: '' }]], 1725, 520, { size: 40, alpha: sstep(2, 2.6, lt) * dim, color: '#ffe0b0' });
+    }
+    // the theorem
+    const ta = sstep(10.67, 11.0, lt), sc = 1 + .25 * (1 - eexpo(clamp((lt - 10.67) / .8)));
+    if (ta <= 0) return;
+    ctx.save(); const rg = ctx.createRadialGradient(W / 2, 520, 0, W / 2, 520, 800); rg.addColorStop(0, `rgba(0,0,0,${.55 * ta})`); rg.addColorStop(1, 'rgba(0,0,0,0)'); ctx.fillStyle = rg; ctx.fillRect(0, 0, W, H); ctx.restore();
+    sparks(W / 2, 520, lt - 10.67, 1, 500, 1400); shockRing(W / 2, 520, lt - 10.67, .9);
+    text('微积分基本定理', W / 2, 250, { size: 46, weight: 700, ls: 14, color: '#f3e3bd', alpha: sstep(11.2, 11.8, lt) });
+    text('THE FUNDAMENTAL THEOREM OF CALCULUS', W / 2, 305, { font: F_EN, size: 22, ls: 8, color: '#cdb88e', alpha: sstep(11.4, 12, lt) });
+    ctx.save(); ctx.translate(W / 2, 520); ctx.scale(sc, sc); ctx.translate(-W / 2, -520);
+    const gold = goldGrad(W / 2 - 500, 400, W / 2 + 500, 640, ((lt - 10.67) * .35) % 1.5), x0 = W / 2 - 470, y = 520, o = { alpha: ta, glow: 'rgba(255,180,80,.6)', blur: 40 };
+    text('d', x0 + 45, y - 58, { font: F_MATH, style: 'italic', size: 90, color: gold, ...o });
+    ctx.save(); ctx.globalAlpha = ta; ctx.fillStyle = '#e9c77a'; ctx.fillRect(x0, y - 3, 92, 5); ctx.restore();
+    text('dx', x0 + 46, y + 58, { font: F_MATH, style: 'italic', size: 90, color: gold, ...o });
+    text('∫', x0 + 170, y + 6, { font: F_MATH, style: 'italic', size: 200, color: gold, ...o });
+    text('x', x0 + 232, y - 104, { font: F_MATH, style: 'italic', size: 56, color: gold, ...o });
+    text('a', x0 + 166, y + 112, { font: F_MATH, style: 'italic', size: 56, color: gold, ...o });
+    mathRun([['f(t) dt', {}], ['  =  ', { style: '' }], ['f(x)', {}]], x0 + 270, y, { size: 104, align: 'left', color: gold, ...o });
+    ctx.restore();
+    const ba = sstep(13.0, 13.6, lt);
+    text('微分', W / 2 - 170, 730, { size: 56, weight: 700, color: '#bfe0ff', alpha: ba });
+    text('⇄', W / 2, 726, { font: F_MATH, size: 72, color: '#fff', alpha: ba, glow: 'rgba(255,220,160,.8)' });
+    text('积分', W / 2 + 170, 730, { size: 56, weight: 700, color: '#ffd88a', alpha: ba });
+    text('Newton 1666  ·  Leibniz 1675', W / 2, 840, { font: F_SCRIPT, size: 58, color: '#f3dca8', alpha: sstep(15, 15.8, lt) });
+  } });
+
+// ---------------------------------------------------------------- 6. Taylor series: polynomials hug sin x, then the same series lights up the complex plane
+const fact = n => n <= 1 ? 1 : n * fact(n - 1);
+const taylor = (x, k) => { let s = 0; for (let j = 0; j <= k; j++) s += (j % 2 ? -1 : 1) * x ** (2 * j + 1) / fact(2 * j + 1); return s; };
+const TT = Array.from({ length: 10 }, (_, k) => .67 + k * BEAT);
+const TTERMS = ['x', ' − x³/3!', ' + x⁵/5!', ' − x⁷/7!', ' + x⁹/9!', ' − x¹¹/11!', ' + …'];
+const DC_T0 = 9.0, DC_STEP = BEAT / 2, DC_N = 11;
+const dcTerms = lt => { if (lt < DC_T0) return 1; const j = Math.floor((lt - DC_T0) / DC_STEP), f = (lt - DC_T0) / DC_STEP - j; return Math.min(DC_N, 1 + j + eout(clamp(f / .5))); };
+scene({ start: 41, len: 6, mb: 3, ch: ['Ⅴ', '泰勒级数', 'TAYLOR SERIES'],
+  subs: [[.5, 4.4, '只要知道一个点上的全部导数……', 'Know every derivative at a single point...'],
+    [4.7, 8.4, '……就能用多项式，一项一项重建整个函数。', '...and you can rebuild the whole function, one term at a time.'],
+    [9.2, 15.6, '到了复平面上它依然成立：颜色是方向，光环是数量级。', 'It holds in the complex plane too: hue is direction, each ring an order of magnitude.']],
+  sfx: [...TT.map((t, k) => [t, 'note', { midi: [69, 72, 74, 76, 79, 81, 84, 86, 88, 91][k] }]), [8.5, 'whoosh', { dur: .8 }], [8.8, 'swell', { dur: .6 }],
+    ...Array.from({ length: DC_N - 1 }, (_, j) => [DC_T0 + j * DC_STEP, 'blip', { midi: 72 + j * 2 }]), [12.8, 'shimmer'], [13.0, 'sparkle', { dur: 2.6 }]],
+  cam: (lt, d) => lt < 8.67 ? camPush(.03)(lt, 8.67) : { z: 1.06 - .06 * sstep(8.67, 16, lt) },
+  draw(lt) {
+    if (lt >= 8.67) {                                        // ---- domain colouring of P_n(z)
+      const N = dcTerms(lt);
+      glDraw(3, { terms: N, amp: sstep(8.67, 9.2, lt) });
+      ctx.save(); const g = ctx.createLinearGradient(0, 0, 0, 300); g.addColorStop(0, 'rgba(0,0,0,.7)'); g.addColorStop(1, 'rgba(0,0,0,0)'); ctx.fillStyle = g; ctx.fillRect(0, 0, W, 300); ctx.restore();
+      const n = Math.floor(N), done = sstep(12.6, 13.0, lt);
+      mathRun([['P', {}], [String(2 * n - 1), { size: .6, dy: .25, style: '' }], ['(z)', {}]], 260, 150, { size: 64, alpha: (1 - done) * sstep(8.9, 9.3, lt), glow: 'rgba(0,0,0,.9)', blur: 16 });
+      text(`${2 * n - 1} 次 · ${n} 项`, 260, 225, { size: 30, color: '#e8eeff', alpha: (1 - done) * sstep(8.9, 9.3, lt), glow: 'rgba(0,0,0,.9)' });
+      mathRun([['sin z', {}]], 260, 160, { size: 76, alpha: done, glow: 'rgba(255,230,180,.9)', blur: 24 });
+      text('复平面 · 域着色', 1700, 150, { size: 30, ls: 6, color: '#fff', alpha: sstep(9.3, 9.9, lt), glow: 'rgba(0,0,0,.9)' });
+      for (let k = -2; k <= 2; k++) {                       // the zeros of sin z: 0, ±π, ±2π
+        const x = W / 2 + k * PI / 4.1 * 540, a = sstep(13.0 + Math.abs(k) * .25, 13.4 + Math.abs(k) * .25, lt);
+        if (a <= 0) continue;
+        ctx.save(); ctx.globalCompositeOperation = 'lighter'; glowDot(x, H / 2, 34, 'rgba(255,255,255,A)', a); ctx.restore();
+        text(k === 0 ? '0' : `${k < 0 ? '−' : ''}${Math.abs(k) === 1 ? '' : '2'}π`, x, H / 2 + 56, { font: F_MATH, style: 'italic', size: 40, color: '#fff', alpha: a, glow: 'rgba(0,0,0,1)', blur: 12 });
+      }
+      return;
+    }
+    glDraw(0, { time: lt + 230, tint: [.06, .18, .3], amp: .6, grid: .6 });
+    const fo = 1 - sstep(8.2, 8.67, lt);
+    ctx.save(); ctx.globalAlpha = fo;
+    const X = x => W / 2 + x * 118, Y = y => 560 - y * 160;
+    axes(X, Y, -7.8, 7.8, -2.4, 2.5, sstep(0, .6, lt));
+    glowLine(sample(Math.sin, -7.7, 7.7, 300).map(([x, y]) => [X(x), Y(y)]), '235,240,255', sstep(0, .8, lt) * .9, 3);
+    let k = -1; while (k + 1 < TT.length && lt >= TT[k + 1]) k++;
+    ctx.save(); ctx.beginPath(); ctx.rect(0, 290, W, 640); ctx.clip();
+    for (let j = 0; j <= k; j++) {
+      const m = eout(clamp((lt - TT[j]) / .45)), cur = j === k, a = cur ? 1 : .18;
+      const pts = sample(x => clamp(j ? lerp(taylor(x, j - 1), taylor(x, j), m) : taylor(x, 0) * m, -4, 4), -7.7, 7.7, 300).map(([x, y]) => [X(x), Y(y)]);
+      glowLine(pts, hueRGB(20 + j * 32, .85, .62), a, cur ? 2.8 : 1.6);
+    }
+    ctx.restore();
+    const pulse = .6 + .4 * Math.sin(lt * 5);
+    ctx.save(); ctx.globalCompositeOperation = 'lighter'; glowDot(X(0), Y(0), 30 + 10 * pulse, 'rgba(255,220,150,A)', sstep(.3, .8, lt)); ctx.restore();
+    if (k >= 0) sparks(X(0), Y(0), lt - TT[k], .45, 200, 500, hueRGB(20 + k * 32, .9, .7));
+    text('展开点 x = 0', X(0) + 20, Y(0) + 46, { size: 26, color: '#ffe0b0', alpha: sstep(.5, 1, lt) * (1 - sstep(5, 5.5, lt)), align: 'left' });
+    panel(W / 2 - 640, 168, 1280, 104, sstep(.3, .8, lt));
+    mathRun([['sin x  =  ', { color: '#e8eeff' }], ...TTERMS.map((s, j) => [s, { alpha: sstep(TT[Math.min(j, 9)], TT[Math.min(j, 9)] + .3, lt),
+      color: j === k ? `rgb(${hueRGB(20 + j * 32, .9, .7)})` : '#fff' }])], W / 2, 220, { size: 52, alpha: sstep(.3, .8, lt) });
+    if (k >= 0) {
+      text(`${2 * k + 1} 次多项式`, 1700, 840, { size: 40, weight: 700, color: `rgb(${hueRGB(20 + k * 32, .9, .7)})`, glow: 'rgba(0,0,0,.8)' });
+      text(`${k + 1} 项`, 1700, 890, { size: 28, color: '#cfd8ff', alpha: .8 });
+    }
+    text('Taylor · 1715', 300, 860, { font: F_SCRIPT, size: 60, color: '#f3dca8', alpha: sstep(7.0, 7.6, lt) });
+    ctx.restore();
+  } });
+
+// ---------------------------------------------------------------- 7. e and Euler: compound interest → (1 + iπ/n)ⁿ → the helix e^{it} → e^{iπ} + 1 = 0
+const EROWS = [1, 2, 10, 100, 1000, 1e6].map((n, j) => [.4 + j * BEAT / 2, n]);
+const EN = Array.from({ length: 8 }, (_, j) => [5.6 + j * BEAT / 2, 2 ** j]);
+const PLANE = { x: W / 2, y: 560, R: 260 };
+function eulerPts(n) { const pts = [[1, 0]]; let re = 1, im = 0; const ai = PI / n; for (let k = 0; k < n; k++) { [re, im] = [re - im * ai, re * ai + im]; pts.push([re, im]); } return pts; }
+const HX = { t0: 9.6, t1: 13.0 };
+function drawHelix(lt, a) {
+  const turn = eio(clamp((lt - 10.0) / 2.6)), P = cam3(lerp(-.32, -PI / 2, turn), lerp(.2, 0, turn), 30, 7400, W / 2, 560);
+  const H3 = t => [(t - 2 * PI) * .42, Math.sin(t), Math.cos(t)], td = 3 * PI * eio(clamp((lt - HX.t0) / (HX.t1 - HX.t0)));
+  const side = 1 - turn;
+  glowLine([P([-3, 0, 0]), P([3, 0, 0])], '200,210,255', a * .45, 1.4);
+  glowLine(sample(t => t, 0, 4 * PI, 200).map(([t]) => P([(t - 2 * PI) * .42, -1.6, Math.cos(t)])), '120,240,230', a * .45 * side, 1.4);
+  glowLine(sample(t => t, 0, 4 * PI, 200).map(([t]) => P([(t - 2 * PI) * .42, Math.sin(t), -1.6])), '255,150,210', a * .45 * side, 1.4);
+  text('cos t', P([3, -1.6, 0])[0] + 20, P([3, -1.6, 0])[1], { font: F_MATH, style: 'italic', size: 36, color: '#9ff6ee', alpha: a * side * sstep(9.8, 10.2, lt), align: 'left' });
+  text('sin t', P([3, 1, -1.6])[0] + 20, P([3, 1, -1.6])[1], { font: F_MATH, style: 'italic', size: 36, color: '#ffb0dc', alpha: a * side * sstep(9.8, 10.2, lt), align: 'left' });
+  glowLine(sample(t => t, 0, 4 * PI, 320).map(([t]) => P(H3(t))), '150,205,255', a * .8, 2.2);
+  if (td > 0) glowLine(sample(t => t, 0, td, 240).map(([t]) => P(H3(t))), '255,205,120', a, 3);
+  const p = P(H3(td));
+  ctx.save(); ctx.globalCompositeOperation = 'lighter'; glowDot(p[0], p[1], 48, 'rgba(255,215,150,A)', a); ctx.restore();
+  mathRun([['e', {}], ['it', { size: .6, dy: -.35 }]], p[0] + 60, p[1] - 60, { size: 56, alpha: a * (1 - sstep(12.8, 13.3, lt)), color: '#ffe0b0', glow: 'rgba(0,0,0,.8)' });
+  const fa = a * sstep(12.4, 12.9, lt);
+  text('Re', P([0, 0, 1.45])[0], P([0, 0, 1.45])[1] + 40, { font: F_MATH, style: 'italic', size: 32, color: '#cfd8ff', alpha: fa });
+  text('Im', P([0, 1.35, 0])[0] + 34, P([0, 1.35, 0])[1], { font: F_MATH, style: 'italic', size: 32, color: '#cfd8ff', alpha: fa });
+  text('−1', p[0] - 50, p[1] + 50, { font: F_MATH, size: 40, color: '#fff', alpha: a * sstep(12.9, 13.2, lt) });
+  return p;
+}
+scene({ start: 47, len: 7, mb: 3, ch: ['Ⅵ', 'e 与欧拉', "e · EULER'S IDENTITY"],
+  subs: [[.4, 4.9, '把复利无限细分，就得到常数 e。', 'Split compound interest infinitely finely, and you get the constant e.'],
+    [5.6, 9.2, '让增长转向虚数方向——它不再变大，而是旋转。', 'Turn that growth toward the imaginary axis—and it no longer grows. It turns.'],
+    [9.7, 13.1, '沿时间展开，它是一条螺旋：侧看是正弦，正看是圆。', 'Unrolled in time it is a helix: a sine wave from the side, a circle head-on.'],
+    [13.8, 18.4, '欧拉恒等式：0、1、e、i、π，被一个等式连在一起。', "Euler's identity: 0, 1, e, i and π, joined in a single equation."]],
+  sfx: [...EROWS.map(([t], j) => [t, 'blip', { midi: 76 + j * 2 }]), [2.6, 'chime', { midi: 81 }], [5.2, 'whoosh', { dur: .8 }],
+    ...EN.map(([t], j) => [t, 'pop', { midi: 64 + j * 3 }]), [9.2, 'whoosh', { dur: 1 }], [9.6, 'glide', { dur: 3.4 }], [10.0, 'swell', { dur: 2.6 }], [13.33, 'boom'], [13.4, 'shimmer']],
+  cam: (lt, d) => ({ z: 1 + .03 * lt / d + .04 * sstep(13.33, 18, lt) }),
+  rays: lt => lt > 13.2 ? [W / 2, 470, .8 * win(lt, 13.33, 18.6, .2, 1.2)] : null,
+  draw(lt) {
+    glDraw(0, { time: lt + 260, tint: lt < 13.33 ? [.1, .1, .35] : [.38, .24, .08], amp: .6 });
+    const A = 1 - sstep(4.9, 5.5, lt);
+    if (A > 0) {                                             // ---- compound interest → e
+      ctx.save(); ctx.globalAlpha = A;
+      panel(110, 200, 720, 560, sstep(.1, .5, lt));
+      mathRun([['(1 + 1/n)', {}], ['ⁿ', { size: .9, dy: -.12 }]], 470, 270, { size: 56, color: '#ffe0b0' });
+      EROWS.forEach(([t, n], j) => {
+        const ra = sstep(t, t + .2, lt), y = 360 + j * 62;
+        text(`n = ${n === 1e6 ? '1 000 000' : n}`, 200, y, { font: F_MATH, size: 38, color: '#dfe6ff', alpha: ra, align: 'left' });
+        text(rollNumber(((1 + 1 / n) ** n).toFixed(6), lt, t, .35, j), 740, y, { font: F_MATH, size: 40, color: '#fff', alpha: ra, align: 'right' });
+      });
+      text('e = 2.718281828…', 470, 840, { font: F_MATH, style: 'italic', size: 72, color: '#ffd88a', alpha: sstep(2.6, 3.0, lt), glow: 'rgba(255,200,110,.9)', blur: 30 });
+      sparks(470, 840, lt - 2.6, .8, 300, 600);
+      const X = x => 1300 + x * 150, Y = y => 820 - y * 45, xp = -1.5 + 3.6 * sstep(.8, 4.8, lt), yp = Math.exp(xp);
+      axes(X, Y, -2.2, 2.9, -.5, 14, sstep(.2, .8, lt));
+      glowLine(sample(Math.exp, -2.1, 2.6, 200).map(([x, y]) => [X(x), Y(y)]), '150,205,255', sstep(.3, 1, lt));
+      text('y = eˣ', X(2.3) - 160, Y(13), { font: F_MATH, style: 'italic', size: 44, color: '#bfe0ff', alpha: sstep(.6, 1.2, lt) });
+      glowLine([-.8, .8].map(d => [X(xp + d), Y(yp + yp * d)]), '255,205,120', sstep(.8, 1.3, lt), 2.2);
+      ctx.save(); ctx.globalAlpha *= sstep(.8, 1.3, lt) * .8; ctx.setLineDash([6, 7]); ctx.strokeStyle = 'rgba(255,230,180,.7)'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(X(xp), Y(0)); ctx.lineTo(X(xp), Y(yp)); ctx.stroke(); ctx.restore();
+      ctx.save(); ctx.globalCompositeOperation = 'lighter'; glowDot(X(xp), Y(yp), 30, 'rgba(255,215,150,A)', sstep(.8, 1.3, lt)); ctx.restore();
+      text('斜率 = 高度', X(xp) - 30, Y(yp) - 60, { size: 32, weight: 700, color: '#ffe0b0', alpha: sstep(1.6, 2.2, lt), align: 'right' });
+      text('(eˣ)′ = eˣ', 1130, 330, { font: F_MATH, style: 'italic', size: 60, color: '#fff', alpha: sstep(2.4, 3, lt), glow: 'rgba(255,210,140,.7)' });
+      ctx.restore();
+    }
+    const B = sstep(5.2, 5.7, lt) * (1 - sstep(9.0, 9.5, lt));
+    if (B > 0) {                                             // ---- (1 + iπ/n)^n curls onto the circle
+      const P = PLANE, Z = ([re, im]) => [P.x + re * P.R, P.y - im * P.R];
+      ctx.save(); ctx.globalAlpha = B; ctx.strokeStyle = 'rgba(190,210,255,.45)'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(P.x - 700, P.y); ctx.lineTo(P.x + 700, P.y); ctx.moveTo(P.x, P.y - 400); ctx.lineTo(P.x, P.y + 330); ctx.stroke(); ctx.restore();
+      glowLine(sample(a => a, 0, TAU, 160).map(([a]) => Z([Math.cos(a), Math.sin(a)])), '150,205,255', B * .55, 2, true);
+      text('Re', P.x + 690, P.y + 34, { font: F_MATH, style: 'italic', size: 30, color: '#cfd8ff', alpha: B });
+      text('Im', P.x + 34, P.y - 390, { font: F_MATH, style: 'italic', size: 30, color: '#cfd8ff', alpha: B });
+      text('−1', P.x - P.R - 34, P.y + 36, { font: F_MATH, size: 32, color: '#fff', alpha: B });
+      text('1', P.x + P.R + 22, P.y + 36, { font: F_MATH, size: 32, color: '#fff', alpha: B });
+      let j = -1; while (j + 1 < EN.length && lt >= EN[j + 1][0]) j++;
+      if (j >= 0) {
+        const n = EN[j][1], m = eout(clamp((lt - EN[j][0]) / .3)), pts = eulerPts(n).map(Z);
+        if (j > 0 && m < 1) glowLine(eulerPts(EN[j - 1][1]).map(Z), '255,205,120', (1 - m) * .5 * B, 2);
+        glowLine(pts, '255,205,120', m * B, 2.4);
+        if (n <= 16) pts.forEach(p => { ctx.save(); ctx.globalCompositeOperation = 'lighter'; glowDot(p[0], p[1], 14, 'rgba(255,220,150,A)', m * B); ctx.restore(); });
+        const end = eulerPts(n)[n], pe = Z(end);
+        sparks(pe[0], pe[1], lt - EN[j][0], B * .5, 140, 300);
+        panel(1380, 180, 470, 200, B);
+        mathRun([['(1 + iπ/n)', {}], ['ⁿ', { size: .9, dy: -.12 }]], 1615, 235, { size: 44, alpha: B, color: '#ffe0b0' });
+        text(`n = ${n}`, 1615, 295, { font: F_MATH, style: 'italic', size: 36, color: '#fff', alpha: B });
+        text(`= ${end[0].toFixed(3)} ${end[1] < 0 ? '−' : '+'} ${Math.abs(end[1]).toFixed(3)} i`, 1615, 345, { font: F_MATH, size: 34, color: '#dfe6ff', alpha: B });
+      }
+    }
+    const C = sstep(9.2, 9.7, lt) * (1 - .93 * sstep(13.33, 13.9, lt));
+    let pEnd = [W / 2 - 300, 560];
+    if (C > 0) pEnd = drawHelix(lt, C);                      // ---- the helix e^{it}
+    const ia = sstep(13.33, 13.6, lt);
+    if (ia <= 0) return;                                     // ---- the identity
+    sparks(pEnd[0], pEnd[1], lt - 13.33, 1, 500, 1400); shockRing(pEnd[0], pEnd[1], lt - 13.33, 1);
+    const sc = 1 + .3 * (1 - eexpo(clamp((lt - 13.33) / .9)));
+    ctx.save(); ctx.translate(W / 2, 470); ctx.scale(sc, sc); ctx.translate(-W / 2, -470);
+    const gold = goldGrad(W / 2 - 520, 380, W / 2 + 520, 560, ((lt - 13.33) * .35) % 1.5);
+    mathRun([['e', {}], ['iπ', { size: .55, dy: -.4 }], ['  +  1  =  0', { style: '' }]], W / 2, 470, { size: 190, color: gold, alpha: ia, glow: 'rgba(255,180,80,.7)', blur: 50 });
+    ctx.restore();
+    ['0', '1', 'e', 'i', 'π'].forEach((s, q) => text(s, W / 2 + (q - 2) * 130, 700, { font: F_MATH, style: q > 1 ? 'italic' : '', size: 64, color: '#fff', alpha: sstep(14.2 + q * .25, 14.6 + q * .25, lt), glow: 'rgba(255,220,160,.8)' }));
+    text('Euler · 1748', W / 2, 820, { font: F_SCRIPT, size: 64, color: '#f3dca8', alpha: sstep(15.8, 16.6, lt) });
+  } });
+
+// ---------------------------------------------------------------- 8. a universe of change: Kepler → a swarm of 1200 Lorenz particles → warped spacetime
+const ORB = { cx: 1020, cy: 540, a: 440, e: .6, T: 2 * BAR };
+ORB.b = ORB.a * Math.sqrt(1 - ORB.e ** 2); ORB.c = ORB.a * ORB.e; ORB.sx = ORB.cx - ORB.c;
+function kepler(t) {
+  const M = TAU * t / ORB.T; let E = M; for (let i = 0; i < 8; i++) E -= (E - ORB.e * Math.sin(E) - M) / (1 - ORB.e * Math.cos(E));
+  const dE = TAU / ORB.T / (1 - ORB.e * Math.cos(E));
+  return { x: ORB.cx + ORB.a * Math.cos(E), y: ORB.cy - ORB.b * Math.sin(E), vx: -ORB.a * Math.sin(E) * dE, vy: -ORB.b * Math.cos(E) * dE };
+}
+const lorenzF = (x, y, z) => [10 * (y - x), x * (28 - z) - y, x * y - 8 / 3 * z];
+function rk4(p, dt) {
+  const k1 = lorenzF(p[0], p[1], p[2]), k2 = lorenzF(p[0] + k1[0] * dt / 2, p[1] + k1[1] * dt / 2, p[2] + k1[2] * dt / 2),
+    k3 = lorenzF(p[0] + k2[0] * dt / 2, p[1] + k2[1] * dt / 2, p[2] + k2[2] * dt / 2), k4 = lorenzF(p[0] + k3[0] * dt, p[1] + k3[1] * dt, p[2] + k3[2] * dt);
+  return [p[0] + dt / 6 * (k1[0] + 2 * k2[0] + 2 * k3[0] + k4[0]), p[1] + dt / 6 * (k1[1] + 2 * k2[1] + 2 * k3[1] + k4[1]), p[2] + dt / 6 * (k1[2] + 2 * k2[2] + 2 * k3[2] + k4[2])];
+}
+const LOR = (() => { const out = []; let p = [.1, 0, 0]; for (let i = 0; i < 9000; i++) { p = rk4(p, .006); out.push(p); } return out; })();
+// 1200 particles that start within 0.001 of each other; sampled 30 times per second of film over 8 s
+const SW = { n: 1200, S: 241, sub: 22, dt: .004, data: null, spread: null };
+function swarm() {
+  if (SW.data) return SW;
+  const r = mulberry(5), d = new Float32Array(SW.n * SW.S * 3), sp = new Float32Array(SW.S), base = LOR[2500];
+  for (let i = 0; i < SW.n; i++) {
+    let p = [base[0] + (r() - .5) * 2e-3, base[1] + (r() - .5) * 2e-3, base[2] + (r() - .5) * 2e-3];
+    for (let s = 0; s < SW.S; s++) { const o = (i * SW.S + s) * 3; d[o] = p[0]; d[o + 1] = p[1]; d[o + 2] = p[2]; for (let k = 0; k < SW.sub; k++) p = rk4(p, SW.dt); }
+  }
+  for (let s = 0; s < SW.S; s++) {
+    let mx = 0, my = 0, mz = 0; for (let i = 0; i < SW.n; i++) { const o = (i * SW.S + s) * 3; mx += d[o]; my += d[o + 1]; mz += d[o + 2]; }
+    mx /= SW.n; my /= SW.n; mz /= SW.n; let v = 0;
+    for (let i = 0; i < SW.n; i++) { const o = (i * SW.S + s) * 3; v += (d[o] - mx) ** 2 + (d[o + 1] - my) ** 2 + (d[o + 2] - mz) ** 2; }
+    sp[s] = Math.sqrt(v / SW.n);
+  }
+  SW.data = d; SW.spread = sp; return SW;
+}
+function drawSwarm(lt, a) {
+  const S = swarm(), u = clamp((lt - 8) / 8) * (S.S - 1), s1 = Math.floor(u), yaw = (lt - 8) * .2 + .6, cp = Math.cos(.28), sp = Math.sin(.28), sc = 14, cx = W / 2 + 230, cy = 540;
+  const P = (x, y, z) => { const X = x * Math.cos(yaw) - y * Math.sin(yaw), D = x * Math.sin(yaw) + y * Math.cos(yaw); return [cx + X * sc, cy - ((z - 25) * cp - D * sp) * sc]; };
+  const CH = 150, n = LOR.length;
+  for (let i0 = 0; i0 < n; i0 += CH) glowLine(LOR.slice(i0, Math.min(n, i0 + CH + 1)).map(q => P(q[0], q[1], q[2])), hueRGB(210 - 30 * i0 / n, .6, .55), a * .16, 1);
+  ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.lineCap = 'round';
+  const B = 6, d = S.data, s0 = Math.max(0, s1 - 6);
+  for (let bk = 0; bk < B; bk++) {
+    const col = hueRGB(195 - bk * 32, .9, .62);
+    for (const [w, al] of [[4, .03], [1.2, .16]]) {
+      ctx.beginPath();
+      for (let i = bk; i < S.n; i += B) {
+        let o = (i * S.S + s0) * 3, p = P(d[o], d[o + 1], d[o + 2]); ctx.moveTo(p[0], p[1]);
+        for (let s = s0 + 1; s <= s1; s++) { o = (i * S.S + s) * 3; p = P(d[o], d[o + 1], d[o + 2]); ctx.lineTo(p[0], p[1]); }
+      }
+      ctx.strokeStyle = `rgba(${col},${al * a})`; ctx.lineWidth = w; ctx.stroke();
+    }
+  }
+  ctx.fillStyle = `rgba(255,240,210,${.3 * a})`;
+  for (let i = 0; i < S.n; i++) { const o = (i * S.S + s1) * 3, p = P(d[o], d[o + 1], d[o + 2]); ctx.fillRect(p[0] - 1.5, p[1] - 1.5, 3, 3); }
+  if (s1 < 40) { const o = s1 * 3, p = P(d[o], d[o + 1], d[o + 2]); glowDot(p[0], p[1], 70, 'rgba(255,230,180,A)', a * (1 - s1 / 40)); }
+  ctx.restore();
+  return S.spread[s1];
+}
+function drawSpacetime(lt, a) {
+  const P = cam3(.18 * Math.sin((lt - 16) * .3), .42, 14, 1450, W / 2, 470), t = lt - 16, w = 1.7, k = sstep(16, 17.5, lt);
+  const M = [[1.9 * Math.cos(w * t), 3.2 + 1.9 * Math.sin(w * t), 2.4], [-1.9 * Math.cos(w * t), 3.2 - 1.9 * Math.sin(w * t), 1.6]];
+  const Hh = (x, z) => { let y = 0; for (const [mx, mz, m] of M) { const r2 = (x - mx) ** 2 + (z - mz) ** 2; y -= m / Math.sqrt(r2 + .45); } const r = Math.hypot(x, z - 3.2); return k * (y * .5 + .14 * Math.sin(3 * r - 6 * t) / (1 + .25 * r) * sstep(.5, 2, t)); };
+  for (const dir of [0, 1]) for (let i = 0; i <= (dir ? 26 : 40); i++) {
+    const pts = [];
+    for (let q = 0; q <= 90; q++) {
+      const x = dir ? -10 + 20 * q / 90 : -10 + 20 * i / 40, z = dir ? -7 + 15 * i / 26 : -7 + 15 * q / 90;
+      pts.push(P([x, Hh(x, z), z]));
+    }
+    const depth = dir ? 1 - i / 26 : .6;
+    glowLine(pts, hueRGB(200 + 60 * (dir ? i / 26 : i / 40), .75, .6), a * (.25 + .5 * depth), 1.2);
+  }
+  ctx.save(); ctx.globalCompositeOperation = 'lighter';
+  M.forEach(([x, z, m], i) => { const p = P([x, Hh(x, z) + .35, z]); glowDot(p[0], p[1], 90 * m / 2, i ? 'rgba(150,200,255,A)' : 'rgba(255,200,120,A)', a); glowDot(p[0], p[1], 30, 'rgba(255,255,255,A)', a); });
+  ctx.restore();
+}
+const EQS = [
+  [[['∂²u/∂t²', {}], [' = ', { style: '' }], ['c²∇²u', {}]], '波动方程 · d’Alembert 1747', 380, 170],
+  [[['∂u/∂t', {}], [' = ', { style: '' }], ['α∇²u', {}]], '热方程 · Fourier 1822', 960, 150],
+  [[['∇ × B', {}], [' = ', { style: '' }], ['μ₀J + μ₀ε₀ ∂E/∂t', {}]], '麦克斯韦方程组 · 1865', 1540, 170],
+  [[['iℏ ∂ψ/∂t', {}], [' = ', { style: '' }], ['Ĥψ', {}]], '薛定谔方程 · 1926', 380, 330],
+  [[['ρ(∂v/∂t + v·∇v)', {}], [' = ', { style: '' }], ['−∇p + μ∇²v', {}]], '纳维–斯托克斯方程', 960, 310],
+  [[['G', {}], ['μν', { size: .55, dy: .25 }], [' + Λg', {}], ['μν', { size: .55, dy: .25 }], [' = ', { style: '' }], ['(8πG/c⁴) T', {}], ['μν', { size: .55, dy: .25 }]], '爱因斯坦场方程 · 1915', 1540, 330]];
+scene({ start: 54, len: 9, mb: 3, ch: ['Ⅶ', '变化的宇宙', 'A UNIVERSE OF CHANGE'],
+  subs: [[.4, 7.6, '牛顿用导数写下运动定律，算出了行星的椭圆轨道。', "Newton wrote the laws of motion with derivatives—and derived the planets' elliptical orbits."],
+    [8.4, 15.5, '1200 个起点只差千分之一的粒子，几秒之后各奔东西——这就是混沌。', '1200 particles that start a thousandth apart scatter within seconds—that is chaos.'],
+    [16.3, 20.2, '热、波、电磁、量子、引力——', 'Heat, waves, electromagnetism, quanta, gravity—']],
+  sfx: [[0, 'whoosh', { dur: 1 }], ...Array.from({ length: 8 }, (_, j) => [(j + 1) * ORB.T / 8, 'tick', { gain: .6, pitch: 1 + (j % 2) * .12 }]),
+    [8, 'boom'], [8.2, 'glide', { dur: 7.5 }], [11, 'sparkle', { dur: 4 }], [15.6, 'whoosh', { dur: 1 }], [16, 'boom'],
+    ...EQS.map((_, j) => [16.4 + j * BEAT / 1.5, 'note', { midi: [69, 72, 76, 79, 81, 84][j] }]), [20.3, 'swell', { dur: 1.6 }], [20.5, 'shimmer']],
+  cam: (lt, d) => lt < 16 ? camPush(.04)(lt, 16) : { z: 1 + .06 * (lt - 16) / 8 },
+  grade: { tintH: [1.08, .99, .92] },
+  rays: lt => lt < 8 ? [ORB.sx, ORB.cy, .35 * sstep(.2, 1, lt) * (1 - sstep(7.4, 8, lt))] : lt > 20.3 ? [W / 2, 520, .6 * sstep(20.3, 21, lt)] : null,
+  draw(lt) {
+    const C = sstep(15.7, 16.3, lt);
+    glDraw(C > 0 ? 1 : 0, { time: lt + 300, tint: C > 0 ? [.15, .22, .55] : [.12, .1, .3], amp: C > 0 ? .4 * C : .55 });
+    const A = 1 - sstep(7.6, 8.2, lt);
+    if (A > 0) {                                             // ---- Kepler
+      ctx.save(); ctx.globalAlpha = A;
+      const t = lt, cyc = Math.min(t, ORB.T - 1e-3);
+      for (let j = 0; j < 8; j++) {
+        const t0 = j * ORB.T / 8, t1 = Math.min(cyc, (j + 1) * ORB.T / 8); if (t1 <= t0) break;
+        ctx.beginPath(); ctx.moveTo(ORB.sx, ORB.cy);
+        for (let q = 0; q <= 24; q++) { const p = kepler(lerp(t0, t1, q / 24)); ctx.lineTo(p.x, p.y); }
+        ctx.closePath(); ctx.fillStyle = j % 2 ? 'rgba(255,190,90,.22)' : 'rgba(100,170,255,.22)'; ctx.fill();
+      }
+      ctx.restore();
+      glowLine(sample(E => E, 0, TAU, 200).map(([E]) => [ORB.cx + ORB.a * Math.cos(E), ORB.cy - ORB.b * Math.sin(E)]), '150,205,255', A * .6, 1.8, true);
+      ctx.save(); ctx.globalCompositeOperation = 'lighter'; glowDot(ORB.sx, ORB.cy, 105, 'rgba(255,190,90,A)', A * .8); glowDot(ORB.sx, ORB.cy, 50, 'rgba(255,240,200,A)', A); ctx.restore();
+      const p = kepler(t), r = Math.hypot(p.x - ORB.sx, p.y - ORB.cy), g = 4.2e6 / r ** 2;
+      const arrow = (x, y, dx, dy, rgb) => { const L = Math.hypot(dx, dy), ux = dx / L, uy = dy / L, ex = x + dx, ey = y + dy;
+        glowLine([[x, y], [ex, ey]], rgb, A, 2.4); glowLine([[ex - ux * 18 - uy * 9, ey - uy * 18 + ux * 9], [ex, ey], [ex - ux * 18 + uy * 9, ey - uy * 18 - ux * 9]], rgb, A, 2.4); };
+      arrow(p.x, p.y, p.vx * .28, p.vy * .28, '140,255,200');
+      arrow(p.x, p.y, (ORB.sx - p.x) / r * g, (ORB.cy - p.y) / r * g, '255,140,120');
+      ctx.save(); ctx.globalCompositeOperation = 'lighter'; glowDot(p.x, p.y, 34, 'rgba(160,210,255,A)', A); ctx.restore();
+      text('速度  dr/dt', 1600, 820, { size: 28, color: '#8cffc8', alpha: A * sstep(1, 1.5, lt), align: 'left' });
+      text('加速度  d²r/dt²', 1600, 866, { size: 28, color: '#ff9a88', alpha: A * sstep(1.2, 1.7, lt), align: 'left' });
+      panel(90, 170, 520, 200, A * sstep(.6, 1.1, lt));
+      mathRun([['F', {}], [' = ', { style: '' }], ['m', {}], [' · ', { style: '' }], ['d²r/dt²', {}]], 350, 240, { size: 54, alpha: A * sstep(.6, 1.1, lt), glow: 'rgba(255,210,140,.6)' });
+      text('Newton · 1687', 350, 320, { font: F_SCRIPT, size: 46, color: '#f3dca8', alpha: A * sstep(1, 1.6, lt) });
+      text('相等时间 · 扫过相等面积', 350, 450, { size: 30, ls: 4, color: '#e8d6ae', alpha: A * sstep(3, 3.6, lt) });
+    }
+    const B = sstep(7.9, 8.5, lt) * (1 - sstep(15.4, 16.1, lt));
+    if (B > 0) {                                             // ---- chaos
+      const spread = drawSwarm(lt, B);
+      panel(90, 300, 600, 470, B);
+      [['dx/dt', ' = σ(y − x)'], ['dy/dt', ' = x(ρ − z) − y'], ['dz/dt', ' = xy − βz']].forEach(([l, r], q) =>
+        mathRun([[l, {}], [r, {}]], 130, 380 + q * 80, { size: 44, align: 'left', alpha: B * sstep(8.6 + q * .3, 9.1 + q * .3, lt) }));
+      text('Lorenz · 1963', 390, 612, { font: F_SCRIPT, size: 46, color: '#f3dca8', alpha: B * sstep(9.8, 10.4, lt) });
+      text(`粒子间距  ${spread < .01 ? spread.toExponential(1) : spread.toFixed(2)}`, 390, 700, { font: F_MATH, size: 36, color: spread > 1 ? '#ffb0a0' : '#c5fff8', alpha: B * sstep(8.6, 9.2, lt) });
+    }
+    if (C <= 0) return;                                      // ---- warped spacetime and the great equations
+    drawSpacetime(lt, C);
+    const fin = sstep(20.3, 21, lt);
+    ctx.save(); const g = ctx.createLinearGradient(0, 60, 0, 440); g.addColorStop(0, 'rgba(0,0,0,.55)'); g.addColorStop(1, 'rgba(0,0,0,0)'); ctx.fillStyle = g; ctx.fillRect(0, 60, W, 380); ctx.restore();
+    EQS.forEach(([parts, name, x, y], j) => {
+      const t0 = 16.4 + j * BEAT / 1.5, e = eexpo(clamp((lt - t0) / .6)); if (e <= 0) return;
+      const sc = (.7 + .3 * e), a = clamp((lt - t0) * 4) * (1 - .75 * fin);
+      ctx.save(); ctx.translate(x, y); ctx.scale(sc, sc); ctx.translate(-x, -y);
+      mathRun(parts, x, y, { size: 40, alpha: a, glow: 'rgba(180,210,255,.8)', blur: 20 });
+      text(name, x, y + 48, { size: 22, ls: 3, color: '#cdd8f0', alpha: a * .85 });
+      ctx.restore();
+    });
+    if (fin > 0) {
+      ctx.save(); const rg = ctx.createRadialGradient(W / 2, 540, 0, W / 2, 540, 700); rg.addColorStop(0, `rgba(0,0,0,${.55 * fin})`); rg.addColorStop(1, 'rgba(0,0,0,0)'); ctx.fillStyle = rg; ctx.fillRect(0, 0, W, H); ctx.restore();
+    }
+    text('宇宙的规律，写在微分方程里。', W / 2, 540, { size: 76, weight: 900, ls: 10, color: '#fff', alpha: fin, glow: 'rgba(255,210,140,.8)', blur: 36 });
+    text('The laws of the universe are written in differential equations.', W / 2, 622, { font: F_IT, style: 'italic', size: 34, color: '#e2cf9f', alpha: sstep(20.6, 21.2, lt) });
+  } });
+
+// ---------------------------------------------------------------- 9. finale: montage → title → the curve folds back into the heartbeat
+const MONTAGE = [[2, 4], [2, 11.8], [2, 19.5], [3, 7], [3, 13], [3, 20], [4, 4.5], [4, 9], [4, 19.5], [5, 12], [6, 12.5], [7, 7.5], [7, 11.5], [7, 14.5], [8, 13], [8, 19]];
+const MWORDS = ['从一个点', '到一条切线', '从无穷小', '到整个宇宙'];
+const FC = { x: W / 2, y: 470, sx: 700, sy: 300 };
+scene({ start: 63, len: 8 + 4 / BAR, fo: 1.6, mb: 3,
+  subs: [], sfx: [...[0, 1, 2, 3].map(i => [i * BAR, 'whoosh', { dur: .7 }]), [10.67, 'shimmer'], [19.4, 'sparkle', { dur: 2.4 }], [21.3, 'suck', { dur: 1.2 }], [22.5, 'heart'], [23.3, 'chime', { midi: 81 }]],
+  cam: (lt, d) => lt < 10.67 ? { z: 1 } : { z: 1 + .035 * (lt - 10.67) / (d - 10.67) },
+  shot: lt => lt < 10.67 ? Math.floor(lt / BEAT) : 99,
+  rays: lt => lt > 10.67 ? [W / 2, 430, .7 * sstep(10.67, 11.2, lt) * (1 - sstep(20.6, 21.6, lt))] : null,
+  draw(lt) {
+    if (lt < 10.67) {
+      const bi = Math.min(15, Math.floor(lt / BEAT)), f = lt / BEAT - bi, [si, t0] = MONTAGE[bi];
+      ctx.save(); const z = 1.08 - .08 * eout(clamp(f * 1.5)); ctx.translate(W / 2, H / 2); ctx.scale(z, z); ctx.translate(-W / 2, -H / 2);
+      SC[si].draw(t0 + f * BEAT, SC[si].d); ctx.restore();
+      ctx.save(); ctx.fillStyle = `rgba(255,255,255,${.14 * (1 - clamp(f * 5))})`; ctx.fillRect(0, 0, W, H); ctx.restore();
+      const w = Math.floor(lt / BAR), wf = lt / BAR - w;
+      ctx.save(); const g = ctx.createLinearGradient(0, 420, 0, 660); g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(.5, 'rgba(0,0,0,.6)'); g.addColorStop(1, 'rgba(0,0,0,0)'); ctx.fillStyle = g; ctx.fillRect(0, 420, W, 240); ctx.restore();
+      text(MWORDS[w], W / 2, 540, { size: 120, weight: 900, color: '#fff', alpha: sstep(0, .12, wf) * (1 - sstep(.9, 1, wf)), glow: 'rgba(255,210,140,.8)', blur: 30, ls: 20 });
+      return;
+    }
+    const k = lt - 10.67, col = clamp((k - 10.6) / 1.8);
+    glDraw(0, { time: lt + 400, tint: [.42, .26, .08], amp: .75 * (1 - .6 * col) });
+    sunburst(FC.x, FC.y, lt, (1 - col) * sstep(0, 1.5, k), 24);
+    sparks(W / 2, 430, k, 1, 500, 1500); shockRing(W / 2, 430, k, 1);
+    const ca = sstep(0, 1.2, k) * (1 - sstep(10.5, 11, k)), u = .1 + .8 * (.5 - .5 * Math.cos(k * .55));
+    drawHero(FC.x, FC.y, FC.sx, FC.sy, ca * .55, 1, '255,215,150');
+    heroRider(FC.x, FC.y, FC.sx, FC.sy, u, ca * .7, 220);
+    if (col > 0) {
+      const [px, py] = heroXY(u, FC.x, FC.y, FC.sx, FC.sy), e = eio(col);
+      ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.fillStyle = '#ffe2b0';
+      for (let i = 0; i < HPTS.length; i += 2) {
+        const p = HPTS[i], [x, y] = heroXY(p.u, FC.x, FC.y, FC.sx, FC.sy), sw = Math.sin(e * PI) * 60 * p.ed;
+        ctx.globalAlpha = .8 * (1 - e * .7); ctx.fillRect(lerp(x, W / 2, e) + Math.cos(p.ea) * sw, lerp(y, H / 2, e) + Math.sin(p.ea) * sw, p.sz, p.sz);
+      }
+      ctx.restore();
+      const beat = k > 12.4 ? Math.exp(-((k - 12.4) % 1.2) * 5) : 0;
+      ctx.save(); ctx.globalCompositeOperation = 'lighter'; glowDot(lerp(px, W / 2, e), lerp(py, H / 2, e), 40 + 70 * e + 50 * beat, 'rgba(255,215,160,A)', .5 + .5 * e); ctx.restore();
+    }
+    ctx.save(); const g = ctx.createRadialGradient(W / 2, 450, 0, W / 2, 450, 560); g.addColorStop(0, 'rgba(0,0,0,.5)'); g.addColorStop(1, 'rgba(0,0,0,0)'); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H); ctx.restore();
+    const ta = 1 - sstep(10.4, 11.2, k);
+    titleWord('微积分', W / 2, 430, 210, k, 0, .14, 70, ta);
+    text('CALCULUS', W / 2, 600, { font: F_EN, size: 44, ls: 30, color: '#ecd9ae', alpha: sstep(.8, 1.8, k) * ta });
+    text('研究「变化」的数学', W / 2, 700, { size: 44, ls: 8, color: '#f3e3bd', alpha: sstep(1.6, 2.6, k) * (1 - sstep(4.9, 5.3, k)) });
+    text('它让无穷，变得可以计算。', W / 2, 700, { size: 50, weight: 700, ls: 10, color: '#fff', alpha: sstep(5.4, 6, k) * (1 - sstep(8, 8.5, k)), glow: 'rgba(255,200,120,.7)' });
+    text('它是变化的语言。', W / 2, 700, { size: 50, weight: 700, ls: 10, color: '#fff', alpha: sstep(8.6, 9.3, k) * (1 - sstep(10.4, 11, k)), glow: 'rgba(255,200,120,.7)' });
+    text('THE BEAUTY OF CHANGE', W / 2, 860, { font: F_EN, size: 30, ls: 16, color: '#e6cf9a', alpha: sstep(9.4, 10.4, k) });
+  } });
+
+// ======================================================================== timeline + frame pipeline
+SC.forEach(s => { s.t0 = s.start * BAR; s.d = s.len * BAR; });
+const SUBS = SC.flatMap(s => s.subs.map(([a, b, zh, en]) => ({ a: s.t0 + a, b: s.t0 + b, zh, en })));
+// the downbeats that hit hardest: [bar, strength] — music.py places an impact on each of these
+const HITS = [[6, 1], [17, .35], [26, .4], [34, .5], [38, .6], [52, .9], [54, .5], [57, .45], [60, .5], [63, .9], [67, .7]].map(([b, k]) => [b * BAR, k]);
+const sceneAt = t => { let sc = SC[0]; for (const s of SC) if (t >= s.t0) sc = s; return sc; };
+function drawLayer(t, jx, jy) {
+  t = clamp(t, 0, TOTAL - 1e-3);
+  const sc = sceneAt(t), lt = t - sc.t0;
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over'; ctx.filter = 'none';
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+  let shake = 0;
+  for (const [th, k] of HITS) if (t >= th && t < th + 1.5) shake += 16 * k * Math.exp(-(t - th) * 6);
+  const cam = sc.cam ? sc.cam(lt, sc.d) : camPush()(lt, sc.d);
+  ctx.save();
+  ctx.translate(W / 2 + jx + (cam.x || 0) + (shake > .3 ? Math.sin(t * 91) * shake : 0), H / 2 + jy + (cam.y || 0) + (shake > .3 ? Math.cos(t * 73) * shake : 0));
+  ctx.scale(cam.z, cam.z); ctx.translate(-W / 2, -H / 2);
+  sc.draw(lt, sc.d, t);
+  ctx.restore();
+  const fade = 1 - win(lt, 0, sc.d, sc.fi ?? .35, sc.fo ?? .35);
+  if (fade > 0) { ctx.fillStyle = `rgba(0,0,0,${fade})`; ctx.fillRect(0, 0, W, H); }
+}
+function chapter(sc, lt) {
+  if (!sc.ch) return; const a = win(lt, .5, 5, .6, .8); if (a <= 0) return;
+  const [n, zh, en] = sc.ch, x = 90, y = 92, slide = (1 - eout(clamp((lt - .5) / .8))) * -30;
+  ctx.font = `700 46px ${F_EN}`; const nw = ctx.measureText(n).width;
+  text(n, x + slide, y, { font: F_EN, weight: 700, size: 46, color: '#e2bd6b', alpha: a, align: 'left' });
+  ctx.save(); ctx.globalAlpha = a; ctx.fillStyle = '#e2bd6b'; ctx.fillRect(x + nw + 20 + slide, y - 26, 2, 52); ctx.restore();
+  text(zh, x + nw + 42 + slide, y - 8, { size: 36, weight: 700, color: '#fff', alpha: a, align: 'left' });
+  text(en, x + nw + 44 + slide, y + 30, { font: F_EN, size: 16, ls: 5, color: '#cdb88e', alpha: a, align: 'left' });
+}
+function subtitles(T) {
+  for (const s of SUBS) {
+    if (T < s.a - .3 || T > s.b + .3) continue;
+    const a = win(T, s.a, s.b, .25, .3); if (a <= 0) continue;
+    ctx.save(); const g = ctx.createLinearGradient(0, 880, 0, H); g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, `rgba(0,0,0,${.6 * a})`); ctx.fillStyle = g; ctx.fillRect(0, 880, W, 200); ctx.restore();
+    text(s.zh, W / 2, 970, { size: 42, weight: 700, color: '#fff', alpha: a, glow: 'rgba(0,0,0,.9)', blur: 12, ls: 2 });
+    text(s.en, W / 2, 1026, { font: F_IT, style: 'italic', size: 29, color: '#ddd5c4', alpha: a * .9, glow: 'rgba(0,0,0,.9)', blur: 8 });
+  }
+}
+function overlays(T) {
+  const lb = 138 * Math.max(1 - eio(clamp((T - SC[1].t0) / .9)), eio(clamp((T - (TOTAL - 7)) / 2)));
+  if (lb > .5) { ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, lb); ctx.fillRect(0, H - lb, W, lb); }
+  const sc = sceneAt(T); chapter(sc, T - sc.t0);
+  subtitles(T);
+  let flash = 0; for (const [th, k] of HITS) if (T >= th && T < th + 1.5) flash += .75 * k * Math.exp(-(T - th) * 5);
+  if (flash > .01) { ctx.fillStyle = `rgba(255,248,235,${Math.min(.9, flash)})`; ctx.fillRect(0, 0, W, H); }
+}
+const SHUTTER = .5, JIT = [[.5, .5], [.25, .75], [.75, .25], [.125, .625], [.625, .125], [.375, .375], [.875, .875], [.0625, .5625]];
+function frame(T, fps = 30, samples = 1) {
+  T = clamp(T, 0, TOTAL - 1e-3);
+  const sc = sceneAt(T), K = samples > 1 ? Math.max(1, sc.mb ?? 3) : 1;
+  for (let k = 0; k < K; k++) {
+    let tk = K > 1 ? Math.max(0, T + ((k + .5) / K - .5) * SHUTTER / fps) : T;
+    if (sceneAt(tk) !== sc || (sc.shot && sc.shot(tk - sc.t0) !== sc.shot(T - sc.t0))) tk = T;
+    drawLayer(tk, K > 1 ? JIT[k][0] - .5 : 0, K > 1 ? JIT[k][1] - .5 : 0);
+    accumulate(k, K);
+  }
+  let shock = [.5, .5, 0, 0], zoom = 0;
+  for (const [th, k] of HITS) if (T >= th && T < th + 2) { shock = [.5, .5, T - th, k]; zoom += .09 * k * Math.exp(-(T - th) * 7); }
+  const r = sc.rays ? sc.rays(T - sc.t0) : null, rays = r && r[2] > 0 ? [r[0] / W, 1 - r[1] / H, r[2]] : [.5, .5, 0];
+  post(T, { ...GRADE, ...(sc.bloom ? { bloom: GRADE.bloom * sc.bloom } : {}), ...(sc.grade || {}), shock, zoom, rays });
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'copy'; ctx.drawImage(glc, 0, 0); ctx.globalCompositeOperation = 'source-over';
+  overlays(T);
+}
+
+// ======================================================================== fonts, playback, export hooks
+let fontsReady = false;
+const SRC = document.scripts[document.scripts.length - 1].textContent;
+const CHARS = [...new Set(SRC.replace(/[\x00-\x7f]/g, ''))].join('') + 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+Promise.all([
+  ...['400', '700', '900'].map(w => document.fonts.load(`${w} 40px "Noto Serif SC"`, CHARS)),
+  document.fonts.load('400 40px "Cinzel"'), document.fonts.load('700 40px "Cinzel"'), document.fonts.load('italic 500 40px "Cormorant Garamond"'), document.fonts.load('500 40px "Cormorant Garamond"'),
+  document.fonts.load('40px "Great Vibes"', 'Leibniz Newton Taylor Euler Lorenz 0123456789'), document.fonts.load('400 40px "STIX Two Text"', CHARS), document.fonts.load('italic 400 40px "STIX Two Text"', CHARS),
+]).catch(() => {}).then(() => document.fonts.ready).then(() => { fontsReady = true; const l = document.getElementById('load'); if (l) l.textContent = '字体已就绪 · 建议全屏观看（F）'; frame(0); });
+setTimeout(() => { fontsReady = true; const l = document.getElementById('load'); if (l && !/就绪/.test(l.textContent)) l.textContent = '点击播放 · 建议全屏观看（F）'; }, 15000);
+
+window.__ready = () => fontsReady;
+window.__frame = (t, fps = 30) => { frame(t, fps, 3); return cv.toDataURL('image/jpeg', .93); };
+window.__duration = TOTAL;
+window.__cues = () => SC.flatMap(s => (s.sfx || []).map(([t, name, o]) => ({ t: +(s.t0 + t).toFixed(4), name, ...(o || {}) }))).sort((a, b) => a.t - b.t);
+
+const au = document.getElementById('au');
+au.src = (window.EMBED && window.EMBED.audio) ? 'data:audio/mpeg;base64,' + window.EMBED.audio : 'music.mp3';
+if (EXPORT) { document.getElementById('start').remove(); document.getElementById('ui').remove(); }
+else {
+  let playing = false, clock0 = 0, useAudio = true, hideT = 0;
+  const ui = document.getElementById('ui'), pp = document.getElementById('pp'), fill = document.getElementById('fill'), tm = document.getElementById('tm');
+  document.getElementById('dur').textContent = `${Math.floor(TOTAL / 60)}:${String(Math.round(TOTAL % 60)).padStart(2, '0')}`;
+  const now = () => useAudio ? au.currentTime : (performance.now() - clock0) / 1000;
+  function loop() {
+    const T = now(); frame(T);
+    fill.style.width = (T / TOTAL * 100) + '%'; tm.textContent = `${Math.floor(T / 60)}:${String(Math.floor(T % 60)).padStart(2, '0')}`;
+    if (T >= TOTAL - .05) { playing = false; pp.textContent = '▶'; }
+    if (playing) requestAnimationFrame(loop);
+  }
+  function play() { playing = true; pp.textContent = '❚❚'; au.play().catch(() => { useAudio = false; clock0 = performance.now() - au.currentTime * 1000; }); requestAnimationFrame(loop); }
+  function pause() { playing = false; pp.textContent = '▶'; au.pause(); }
+  document.getElementById('go').onclick = () => { document.getElementById('start').remove(); if (au.currentTime >= TOTAL - .1) au.currentTime = 0; play(); poke(); };
+  pp.onclick = () => playing ? pause() : play();
+  document.getElementById('bar').onclick = e => { const r = e.currentTarget.getBoundingClientRect(); au.currentTime = clamp((e.clientX - r.left) / r.width) * TOTAL; if (!useAudio) clock0 = performance.now() - au.currentTime * 1000; if (!playing) frame(au.currentTime); };
+  document.getElementById('fs').onclick = () => document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
+  function poke() { ui.classList.remove('hide'); clearTimeout(hideT); hideT = setTimeout(() => ui.classList.add('hide'), 2200); }
+  addEventListener('mousemove', poke);
+  addEventListener('keydown', e => {
+    if (document.getElementById('start')) return;
+    if (e.code === 'Space') { e.preventDefault(); playing ? pause() : play(); }
+    if (e.code === 'KeyF') document.getElementById('fs').click();
+    if (e.code === 'ArrowRight' || e.code === 'ArrowLeft') { au.currentTime = clamp(au.currentTime + (e.code === 'ArrowRight' ? 5 : -5), 0, TOTAL); if (!playing) frame(au.currentTime); }
+    poke();
+  });
+}
+</script>
+</body>
+</html>
